@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>unitree_sdk2</name>
+  <version>2.0.0</version>
+  <description>The unitree_sdk2 package for Go2 robot control</description>
+
+  <maintainer email="shui@todo.todo">shui</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- 编译时需要的依赖 -->
+  <build_depend>roscpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>geometry_msgs</build_depend>
+
+  <!-- 导出给其他包使用时的依赖 -->
+  <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>std_msgs</build_export_depend>
+  <build_export_depend>geometry_msgs</build_export_depend>
+
+  <!-- 运行时需要的依赖 -->
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+
+  <export>
+    <!-- 这里说明该包是一个纯 CMake 包的 ROS 包装 -->
+  </export>
+</package>

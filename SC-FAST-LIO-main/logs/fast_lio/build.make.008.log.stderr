@@ -1,0 +1,31 @@
+In file included from [01m[K/usr/include/boost/preprocessor/tuple/elem.hpp:23[m[K,
+                 from [01m[K/usr/include/boost/preprocessor/arithmetic/add.hpp:21[m[K,
+                 from [01m[K/usr/include/boost/mpl/aux_/preprocessor/def_params_tail.hpp:66[m[K,
+                 from [01m[K/usr/include/boost/mpl/aux_/na_spec.hpp:28[m[K,
+                 from [01m[K/usr/include/boost/mpl/next_prior.hpp:18[m[K,
+                 from [01m[K/usr/include/boost/mpl/next.hpp:17[m[K,
+                 from [01m[K/usr/include/boost/mpl/list/aux_/push_front.hpp:18[m[K,
+                 from [01m[K/usr/include/boost/mpl/list/list0.hpp:19[m[K,
+                 from [01m[K/usr/include/boost/mpl/list/list10.hpp:18[m[K,
+                 from [01m[K/usr/include/boost/mpl/list/list20.hpp:18[m[K,
+                 from [01m[K/usr/include/boost/mpl/list.hpp:36[m[K,
+                 from [01m[K/usr/include/boost/math/policies/policy.hpp:9[m[K,
+                 from [01m[K/usr/include/boost/math/policies/error_handling.hpp:21[m[K,
+                 from [01m[K/usr/include/boost/math/special_functions/round.hpp:14[m[K,
+                 from [01m[K/opt/ros/noetic/include/ros/time.h:58[m[K,
+                 from [01m[K/opt/ros/noetic/include/ros/ros.h:38[m[K,
+                 from [01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/laserMapping.cpp:44[m[K:
+[01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/preprocess.h:57:6:[m[K [01;35m[Kwarning: [m[K‘[01m[Kusing uint16_t = uint16_t[m[K’ is deprecated: use std::uint16_t instead of pcl::uint16_t [[01;35m[K-Wdeprecated-declarations[m[K]
+   57 |     ([01;35m[Kuint16_t[m[K, ring, ring)
+      |      [01;35m[K^~~~~~~~[m[K
+In file included from [01m[K/usr/include/pcl-1.10/pcl/point_types.h:42[m[K,
+                 from [01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/include/common_lib.h:6[m[K,
+                 from [01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/IMU_Processing.hpp:11[m[K,
+                 from [01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/laserMapping.cpp:46[m[K:
+[01m[K/usr/include/pcl-1.10/pcl/pcl_macros.h:94:9:[m[K [01;36m[Knote: [m[Kdeclared here
+   94 |   using [01;36m[Kuint16_t[m[K [[deprecated("use std::uint16_t instead of pcl::uint16_t")]] = std::uint16_t;
+      |         [01;36m[K^~~~~~~~[m[K
+[01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/laserMapping.cpp:[m[K In function ‘[01m[Kint main(int, char**)[m[K’:
+[01m[K/home/shui/LY/SC-FAST-LIO-main/src/SC_FAST_LIO/src/laserMapping.cpp:1112:15:[m[K [01;35m[Kwarning: [m[Kignoring return value of ‘[01m[Kint system(const char*)[m[K’, declared with attribute warn_unused_result [[01;35m[K-Wunused-result[m[K]
+ 1112 |         [01;35m[Ksystem(cmd.c_str())[m[K;
+      |         [01;35m[K~~~~~~^~~~~~~~~~~~~[m[K

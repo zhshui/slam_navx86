@@ -1,0 +1,29 @@
+# Build / Devel
+build/
+devel/
+*.o
+*.obj
+*.pyc
+__pycache__/
+.catkin_tools/
+
+# Binary packages
+deb/*.zip
+deb/*.whl
+*.tar.gz
+*.tar.bz2
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ROS logs
+*.log
+*.bag
+
+# System files
+.DS_Store
+Thumbs.db

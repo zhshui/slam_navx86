@@ -1,0 +1,482 @@
+.MapEditor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  background-color: #1a1a1a;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.EditorHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background-color: rgba(30, 30, 30, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.EditorHeader h2 {
+  margin: 0;
+  color: white;
+  font-size: 18px;
+}
+
+.EditorContent {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.Toolbar {
+  width: 200px;
+  background-color: rgba(30, 30, 30, 0.95);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.ToolbarToggle:hover {
+  background-color: rgba(40, 40, 40, 0.95);
+  color: white;
+}
+
+.ToolbarOptions {
+  width: 200px;
+  background-color: rgba(30, 30, 30, 0.95);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  transition: width 0.3s ease;
+  overflow: hidden;
+}
+
+.ToolButton {
+  width: 100%;
+  padding: 12px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.ToolButton:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.ToolButton.active {
+  background-color: rgba(33, 150, 243, 0.8);
+  border-color: rgba(33, 150, 243, 1);
+}
+
+.EditorCanvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.EditorMapCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none; /* 阻止浏览器默认手势，由 JS 控制 */
+}
+
+.EditorMapCanvas.cursor-brush {
+  cursor: none;
+}
+
+.EditorMapCanvas.cursor-eraser {
+  cursor: none;
+}
+.EditorMapCanvas.cursor-crosshair {
+  cursor: crosshair;
+}
+
+.BrushIndicator {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  z-index: 1000;
+}
+
+.BrushIndicator-eraser {
+  border: 2px solid rgba(255, 77, 77, 0.8);
+  background-color: rgba(255, 77, 77, 0.2);
+}
+
+.BrushIndicator-brush {
+  border: 2px solid rgba(33, 150, 243, 0.8);
+  background-color: rgba(33, 150, 243, 0.2);
+}
+
+.PropertyPanel {
+  width: 300px;
+  background-color: rgba(30, 30, 30, 0.95);
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.PropertySection {
+  margin-bottom: 24px;
+}
+
+.PropertySection h3 {
+  margin: 0 0 16px 0;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.PropertyRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.PropertyRow label {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  min-width: 80px;
+}
+
+.PropertyRow input {
+  flex: 1;
+  padding: 6px 8px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.PropertyRow input:focus {
+  outline: none;
+  border-color: rgba(33, 150, 243, 0.8);
+}
+
+.PropertyRow span {
+  color: white;
+  font-size: 14px;
+}
+
+.DeleteButton {
+  width: 100%;
+  padding: 8px;
+  background-color: rgba(255, 77, 77, 0.8);
+  color: white;
+  border: 1px solid rgba(255, 77, 77, 1);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+  margin-top: 12px;
+}
+
+.DeleteButton:hover {
+  background-color: rgba(255, 77, 77, 1);
+  border-color: rgba(255, 77, 77, 1);
+}
+
+.CloseButton {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 32px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.CloseButton:hover {
+  color: #ff6b6b;
+}
+
+.CoordinateDisplay {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 12px 16px;
+  z-index: 10;
+  pointer-events: none;
+  user-select: none;
+  font-family: 'Courier New', monospace;
+}
+
+.CoordinateRow {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.CoordinateRow:last-child {
+  margin-bottom: 0;
+}
+
+.CoordinateLabel {
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 60px;
+}
+
+.CoordinateValue {
+  color: white;
+  font-weight: 500;
+}
+
+/* ========== 平板适配 (Tablet Responsive) ========== */
+
+/* 工具栏折叠按钮 — 桌面端隐藏 */
+.ToolbarToggle {
+  display: none;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 22px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.ToolbarToggle:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+/* 平板横屏 (≤1024px) */
+@media (max-width: 1024px) {
+  .EditorHeader {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .EditorHeader h2 {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+  .EditorHeader > div {
+    flex-wrap: wrap;
+    gap: 6px !important;
+  }
+  /* 编辑器头部的保存按钮 — 缩短文字 */
+  .EditorHeader button.SaveButton,
+  .EditorHeader button[title*="发布"] {
+    padding: 6px 10px !important;
+    font-size: 12px !important;
+    white-space: nowrap;
+  }
+
+  /* 工具栏缩小 */
+  .Toolbar {
+    width: 56px;
+    padding: 8px 4px;
+    gap: 6px;
+    overflow-y: auto;
+    transition: width 0.25s ease;
+  }
+  .Toolbar.toolbar-open {
+    width: 180px;
+    padding: 8px;
+  }
+
+  /* 工具按钮 — 默认只显示图标 */
+  .ToolButton {
+    padding: 10px 8px;
+    font-size: 0;
+    text-align: center;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .ToolButton::first-letter {
+    font-size: 20px;
+  }
+  .toolbar-open .ToolButton {
+    font-size: 13px;
+    text-align: left;
+    padding: 10px 12px;
+    justify-content: flex-start;
+  }
+
+  /* 工具栏折叠切换按钮 */
+  .ToolbarToggle {
+    display: flex;
+  }
+
+  /* ToolbarOptions — 跟随工具栏 */
+  .ToolbarOptions {
+    width: 56px;
+    padding: 6px 4px;
+    overflow: hidden;
+    transition: width 0.25s ease;
+  }
+  .toolbar-open ~ .ToolbarOptions,
+  .ToolbarOptions.toolbar-options-open {
+    width: 180px;
+    padding: 10px 8px;
+  }
+  .ToolbarOptions label,
+  .ToolbarOptions span,
+  .ToolbarOptions p,
+  .ToolbarOptions button {
+    font-size: 0 !important;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .toolbar-open ~ .ToolbarOptions label,
+  .toolbar-open ~ .ToolbarOptions span,
+  .toolbar-open ~ .ToolbarOptions p,
+  .toolbar-open ~ .ToolbarOptions button,
+  .ToolbarOptions.toolbar-options-open label,
+  .ToolbarOptions.toolbar-options-open span,
+  .ToolbarOptions.toolbar-options-open p,
+  .ToolbarOptions.toolbar-options-open button {
+    font-size: 13px !important;
+  }
+
+  /* 属性面板 — 覆盖层而非侧边栏 */
+  .PropertyPanel {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 50;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .PropertyRow label {
+    min-width: 60px;
+    font-size: 13px;
+  }
+  .PropertyRow input {
+    font-size: 13px;
+  }
+
+  /* 坐标显示调整 */
+  .CoordinateDisplay {
+    bottom: 10px;
+    left: 10px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  .CoordinateRow {
+    font-size: 11px;
+  }
+}
+
+/* 竖屏平板 / 大屏手机 (≤768px) */
+@media (max-width: 768px) {
+  .EditorHeader h2 {
+    font-size: 14px;
+  }
+
+  /* 工具栏在底部 */
+  .EditorContent {
+    flex-direction: column;
+  }
+
+  .Toolbar {
+    width: 100%;
+    height: 56px;
+    flex-direction: row;
+    padding: 4px 8px;
+    gap: 6px;
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    order: 2;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+  }
+  .Toolbar.toolbar-open {
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+  .ToolButton {
+    min-width: 44px;
+    min-height: 44px;
+    flex-shrink: 0;
+    font-size: 0;
+    padding: 8px 10px;
+    width: auto;
+  }
+  .toolbar-open .ToolButton {
+    font-size: 12px;
+    width: auto;
+    flex: 0 1 auto;
+  }
+
+  .ToolbarToggle {
+    display: flex;
+    position: absolute;
+    bottom: 64px;
+    right: 10px;
+    z-index: 60;
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+
+  /* ToolbarOptions 也放底部 */
+  .ToolbarOptions {
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    padding: 6px 8px;
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    order: 3;
+    flex-shrink: 0;
+  }
+  .toolbar-open ~ .ToolbarOptions {
+    width: 100%;
+  }
+
+  /* 属性面板 — 从底部弹出 */
+  .PropertyPanel {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    max-height: 45vh;
+    border-radius: 14px 14px 0 0;
+    border-left: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
+

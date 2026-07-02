@@ -1,0 +1,13 @@
+<launch>
+  <arg name="file_path" />
+
+  <node pkg="pcd2grid" type="pcd2grid_node" name="pcd2grid" output="screen">
+    <param name="file_path" value="$(arg file_path)"/>
+    <param name="filter_leaf_size_m" value="0.2"/>
+    <param name="resolution" value="0.10"/>
+    <param name="pointcloud_min_z" value="0"/>
+    <param name="pointcloud_max_z" value="0.6"/>
+  </node>
+
+
+</launch>

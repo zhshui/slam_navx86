@@ -1,0 +1,121 @@
+<launch>
+<!-- Faster-LIO (前端里程计) + hdl_graph_slam (回环检测+位姿图优化) -->
+
+  <!-- Faster-LIO 配置 -->
+  <rosparam command="load" file="$(find faster_lio)/config/c16.yaml" />
+
+  <param name="feature_extract_enable" type="bool" value="0"/>
+  <param name="point_filter_num_" type="int" value="4"/>
+  <param name="max_iteration" type="int" value="3" />
+  <param name="filter_size_surf" type="double" value="0.5" />
+  <param name="filter_size_map" type="double" value="0.5" />
+  <param name="cube_side_length" type="double" value="1000" />
+  <param name="runtime_pos_log_enable" type="bool" value="0" />
+
+  <!-- 连接 TF 树: body (Faster-LIO IMU帧) → base_link (机器人机体) -->
+  <node pkg="tf" type="static_transform_publisher" name="body_to_baselink"
+        args="0 0 0 0 0 0 body base_link 10" />
+
+  <!-- Nodelet manager -->
+  <node pkg="nodelet" type="nodelet" name="graph_slam_manager" args="manager" output="screen" />
+
+  <!-- Prefiltering: /cloud_registered_body (Faster-LIO 去畸变 body 帧点云) → /filtered_points -->
+  <node pkg="nodelet" type="nodelet" name="prefiltering_nodelet"
+        args="load hdl_graph_slam/PrefilteringNodelet graph_slam_manager">
+    <remap from="/velodyne_points" to="/cloud_registered_body" />
+
+    <param name="deskewing" value="false" />
+    <param name="base_link_frame" value="" />
+
+    <param name="use_distance_filter" value="true" />
+    <param name="distance_near_thresh" value="1.0" />
+    <param name="distance_far_thresh" value="100.0" />
+
+    <param name="downsample_method" value="VOXELGRID" />
+    <param name="downsample_resolution" value="0.1" />
+
+    <param name="outlier_removal_method" value="RADIUS" />
+    <param name="radius_radius" value="0.5" />
+    <param name="radius_min_neighbors" value="2" />
+  </node>
+
+  <!-- Faster-LIO 前端里程计 -->
+  <node pkg="faster_lio" type="run_mapping_online" name="laserMapping" output="screen" />
+
+  <!-- hdl_graph_slam 后端：回环检测 + 位姿图优化 -->
+  <node pkg="nodelet" type="nodelet" name="hdl_graph_slam_nodelet"
+        args="load hdl_graph_slam/HdlGraphSlamNodelet graph_slam_manager">
+
+    <!-- 里程计: Faster-LIO /Odometry (camera_init → body) -->
+    <remap from="/odom" to="/Odometry" />
+    <!-- IMU -->
+    <remap from="/gpsimu_driver/imu_data" to="/livox/imu" />
+
+    <param name="map_frame_id" value="map" />
+    <param name="odom_frame_id" value="camera_init" />
+    <param name="points_topic" value="/cloud_registered_body" />
+
+    <param name="enable_gps" value="false" />
+    <param name="enable_imu_acceleration" value="true" />
+    <param name="enable_imu_orientation" value="false" />
+
+    <!-- 关键帧 -->
+    <param name="max_keyframes_per_update" value="10" />
+    <param name="keyframe_delta_trans" value="0.5" />
+    <param name="keyframe_delta_angle" value="0.2" />
+
+    <!-- 固定首节点 -->
+    <param name="fix_first_node" value="true" />
+    <param name="fix_first_node_adaptive" value="true" />
+    <param name="fix_first_node_stddev" value="10 10 10 1 1 1" />
+
+    <!-- 回环检测 -->
+    <param name="distance_thresh" value="10.0" />
+    <param name="accum_distance_thresh" value="15.0" />
+    <param name="min_edge_interval" value="10.0" />
+    <param name="fitness_score_thresh" value="2.5" />
+
+    <!-- 回环配准: FAST_GICP -->
+    <param name="registration_method" value="FAST_GICP" />
+    <param name="reg_num_threads" value="0" />
+    <param name="reg_transformation_epsilon" value="0.1"/>
+    <param name="reg_maximum_iterations" value="64"/>
+    <param name="reg_max_correspondence_distance" value="2.0"/>
+    <param name="reg_max_optimizer_iterations" value="20"/>
+    <param name="reg_use_reciprocal_correspondences" value="false"/>
+    <param name="reg_correspondence_randomness" value="20"/>
+    <param name="reg_resolution" value="1.0" />
+    <param name="reg_nn_search_method" value="DIRECT7" />
+
+    <!-- 图优化 -->
+    <param name="g2o_solver_type" value="lm_var_cholmod" />
+    <param name="g2o_solver_num_iterations" value="512" />
+
+    <!-- 边鲁棒核 -->
+    <param name="odometry_edge_robust_kernel" value="NONE" />
+    <param name="loop_closure_edge_robust_kernel" value="Huber" />
+    <param name="loop_closure_edge_robust_kernel_size" value="1.0" />
+
+    <!-- 信息矩阵 -->
+    <param name="use_const_inf_matrix" value="false" />
+    <param name="const_stddev_x" value="0.5" />
+    <param name="const_stddev_q" value="0.1" />
+    <param name="var_gain_a" value="20.0" />
+    <param name="min_stddev_x" value="0.1" />
+    <param name="max_stddev_x" value="5.0" />
+    <param name="min_stddev_q" value="0.05" />
+    <param name="max_stddev_q" value="0.2" />
+
+    <!-- 更新频率 -->
+    <param name="graph_update_interval" value="3.0" />
+    <param name="map_cloud_update_interval" value="10.0" />
+    <param name="map_cloud_resolution" value="0.05" />
+  </node>
+
+  <!-- map2odom TF: 发布 map → camera_init 修正 -->
+  <node pkg="hdl_graph_slam" type="map2odom_publisher.py" name="map2odom_publisher" />
+
+  <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find faster_lio)/rviz_cfg/loam_livox.rviz" />
+
+</launch>

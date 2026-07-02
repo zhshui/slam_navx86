@@ -1,0 +1,13 @@
+<launch>
+
+    <!-- network interface arg with default -->
+    <arg name="nic" default="enp46s0" />
+    <arg name="enable_teleop" default="false" />
+
+    <!-- 2. 启动刚才编译生成的二进制节点 -->
+    <!-- 注意：pkg 是你的项目名，type 是 add_executable 里的程序名 -->
+    <node pkg="unitree_sdk2" type="go2_cmd_vel" name="go2_cmd_vel_node" output="screen" args="$(arg nic)" />
+    
+    <!-- 3. 可选：启动键盘控制 -->
+    <node if="$(arg enable_teleop)" pkg="teleop_twist_keyboard" type="teleop_twist_keyboard.py" name="teleop" output="screen" />
+</launch>

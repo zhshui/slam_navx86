@@ -1,0 +1,41 @@
+common:
+    lid_topic:  "/livox/lidar"
+    imu_topic:  "/livox/imu"
+    time_sync_en: false
+    time_offset_lidar_to_imu: 0.0
+
+preprocess:
+    lidar_type: 1                # 1 for Livox AVIA serials (including MID360)
+    scan_line: 1
+    timestamp_unit: 2
+    scan_rate: 10
+    blind: 0.3
+    crop_body_en: true           # Enable robot body self-filtering
+    crop_body_min: [-0.8, -0.35, -0.6]  # [x, y, z] min corner in LiDAR frame (m)
+    crop_body_max: [ 0.8,  0.35,  0.05]  # [x, y, z] max corner in LiDAR frame (m)
+
+mapping:
+    det_range: 300.0
+    fov_degree: 360.0            # MID360 has 360 degree horizontal FOV
+    gyr_cov: 0.1
+    acc_cov: 0.1
+    b_gyr_cov: 0.001
+    b_acc_cov: 0.001
+    extrinsic_est_en: true
+    extrinsic_T: [0.0, 0.0, 0.0]
+    extrinsic_R: [0.9659, 0, -0.2588,
+                  0,      1, 0,
+                  0.2588, 0, 0.9659]
+
+publish:
+    path_en: true
+    scan_publish_en: true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: true
+    interval: -1
+    save_dir: "/home/robot/go2_nav/lite_cog/system/map/scans"
+    rear_filter_en: true            # 过滤雷达后方固定物
+    rear_filter_angle: 90.0         # 后方过滤扇形角度(度)，对称于正后方

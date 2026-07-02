@@ -1,0 +1,6 @@
+image: 亮宇0.pgm
+resolution: 0.1
+origin: [-8.66543, -13.6327, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
