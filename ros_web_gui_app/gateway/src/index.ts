@@ -606,16 +606,27 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     return { pgmPath, yamlPath }
   }
 
-  /** 尝试将 PCD 复制到地图文件夹。如果指定了 pcdSource 且文件存在则直接使用 */
+  /** 尝试将 PCD 复制到地图文件夹。如果指定了 pcdSource 且文件存在则直接使用。
+   *  根目录下的 PCD（如 scans_1.pcd）用移动代替复制，避免与文件夹内的 PCD 重复。 */
   function copyPcdToMapFolder(mapDir: string, pcdSource?: string | null): string {
     const mapFolder = path.join(mapDir, name)
     mkdirSync(mapFolder, { recursive: true })
     const pcdDest = path.join(mapFolder, `${name}.pcd`)
 
+    // 根目录下的 PCD 用移动（rename），避免残留重复文件；其他路径用复制
+    function moveOrCopy(src: string, dst: string, label: string) {
+      if (path.dirname(src) === mapDir) {
+        renameSync(src, dst)
+        console.log(`[gateway] PCD moved (root cleanup): ${src} -> ${dst} (${label})`)
+      } else {
+        copyFileSync(src, dst)
+        console.log(`[gateway] PCD copied: ${src} -> ${dst} (${label})`)
+      }
+    }
+
     // 0) 用户手动指定的 PCD 优先
     if (pcdSource && existsSync(pcdSource)) {
-      copyFileSync(pcdSource, pcdDest)
-      console.log(`[gateway] PCD copied from user selection: ${pcdSource} -> ${pcdDest}`)
+      moveOrCopy(pcdSource, pcdDest, 'user selection')
       return pcdDest
     }
 
@@ -634,16 +645,14 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     // 优先匹配：文件名与地图名相同的 PCD
     const nameMatch = allPcds.find(p => path.basename(p.path, '.pcd') === name)
     if (nameMatch) {
-      copyFileSync(nameMatch.path, pcdDest)
-      console.log(`[gateway] PCD copied by name match: ${nameMatch.path} -> ${pcdDest}`)
+      moveOrCopy(nameMatch.path, pcdDest, 'name match')
       return pcdDest
     }
 
     // 取最新修改的 PCD
     allPcds.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const latest = allPcds[0]
-    copyFileSync(latest.path, pcdDest)
-    console.log(`[gateway] PCD copied (latest): ${latest.path} -> ${pcdDest}`)
+    moveOrCopy(latest.path, pcdDest, 'latest')
     return pcdDest
   }
 
@@ -743,13 +752,22 @@ free_thresh: 0.196
 `
   writeFileSync(yamlPath, yamlContent)
   // PCD 复制逻辑：用户指定 > 激活地图继承 > 自动搜索
+  // 根目录下的 PCD 用移动代替复制，避免残留重复文件
+  const moveOrCopyToFolder = (src: string, dst: string) => {
+    if (path.dirname(src) === mapDir) {
+      renameSync(src, dst)
+      console.log(`[gateway] Import PCD moved (root cleanup): ${src} -> ${dst}`)
+    } else {
+      copyFileSync(src, dst)
+      console.log(`[gateway] Import PCD copied: ${src} -> ${dst}`)
+    }
+  }
   const userPcd = req.body?.pcd_path ? String(req.body.pcd_path).trim() : ''
   let pcdPath = ''
   if (userPcd && existsSync(userPcd)) {
     const pcdDest = path.join(mapFolder, `${mapName}.pcd`)
-    copyFileSync(userPcd, pcdDest)
+    moveOrCopyToFolder(userPcd, pcdDest)
     pcdPath = pcdDest
-    console.log(`[gateway] Import PCD from user selection: ${userPcd} -> ${pcdDest}`)
   } else {
     const activeMap = db.prepare('SELECT pcd_path FROM maps WHERE active = 1').get() as { pcd_path: string } | undefined
     if (activeMap?.pcd_path && existsSync(activeMap.pcd_path)) {
@@ -762,7 +780,7 @@ free_thresh: 0.196
       if (allPcds.length > 0) {
         allPcds.sort((a, b) => b.mtimeMs - a.mtimeMs)
         const pcdDest = path.join(mapFolder, `${mapName}.pcd`)
-        copyFileSync(allPcds[0].path, pcdDest)
+        moveOrCopyToFolder(allPcds[0].path, pcdDest)
         pcdPath = pcdDest
       }
     }

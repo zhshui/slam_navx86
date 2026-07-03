@@ -1129,10 +1129,9 @@ int main(int argc, char** argv)
         cout << "current scan saved to /PCD/" << file_name << endl;
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
 
-        // Auto-convert saved PCD to 2D grid map
-        string cmd = string("bash /home/robot/go2_nav/lite_cog/system/convert_pcd.sh ") + all_points_dir;
-        cout << "[pcd2grid] running: " << cmd << endl;
-        system(cmd.c_str());
+        // PGM/YAML conversion is now handled by map_stop_hook.sh
+        // (called by web gateway on /api/mapping/stop).
+        // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
     }
 
     fout_out.close();

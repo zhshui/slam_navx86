@@ -51,12 +51,12 @@ fi
 echo "$TAG 2/6 查找 PCD 文件 ..."
 PCD_FILE=""
 LATEST_TS=0
-for f in "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
+for f in "$MAP_DIR"/*.pcd "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
-    # 跳过衍生文件
+    # 跳过衍生文件及用作定位副本的 current.pcd
     case "$base" in
-        *leveled*|*colored*|*_z_range*) continue ;;
+        *leveled*|*colored*|*_z_range*|current.pcd) continue ;;
     esac
     ts=$(stat -c %Y "$f" 2>/dev/null || echo 0)
     if [ "$ts" -gt "$LATEST_TS" ]; then

@@ -36,6 +36,6 @@ publish:
 pcd_save:
     pcd_save_en: true
     interval: -1
-    save_dir: "/home/robot/go2_nav/lite_cog/system/map/scans"
+    save_dir: "/home/robot/go2_nav/lite_cog/system/map"
     rear_filter_en: true            # 过滤雷达后方固定物
-    rear_filter_angle: 90.0         # 后方过滤扇形角度(度)，对称于正后方
+    rear_filter_angle: 60.0         # 后方过滤扇形角度(度)，对称于正后方

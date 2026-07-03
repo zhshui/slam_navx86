@@ -22,6 +22,9 @@ ros_web_gui_app/gateway/uploads/
 *.bag
 *.launch~
 
+# ===== Nested external repos =====
+SC-FAST-LIO-main/src/livox_ros_driver/Livox-SDK/
+
 # ===== Binary packages =====
 *.zip
 *.whl
