@@ -42,13 +42,13 @@ stvl_obstacle_layer:
   map_save_duration:     60     #default 60s, how often to autosave
 
   livox_lidar:
-    topic: /livox/lidar
+    topic: /livox/lidar_nav
     sensor_frame: livox_frame
     observation_persistence: 0.0  #default 0, use all measurements taken during now-value, 0=latest 
     expected_update_rate: 10.0     #default 0, if not updating at this rate at least, remove from buffer
     data_type: PointCloud2
     min_obstacle_height: -0.15      #default 0, meters
-    max_obstacle_height: 1.5      #defaule 3, meters
+    max_obstacle_height: 0.6      #defaule 3, meters
     inf_is_valid: false           #default false, for laser scans    
     marking: true
     clearing: true
@@ -69,7 +69,7 @@ sob_layer:
   enabled: true
   inflate_unknown: false
   inscribed_radius: 0.15
-  inflation_radius: 0.45
+  inflation_radius: 0.2
   cost_scaling_factor: 10
 
 

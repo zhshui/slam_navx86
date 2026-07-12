@@ -11,7 +11,7 @@ TebLocalPlannerROS:
   teb_autosize: true
   dt_ref: 0.5
   dt_hysteresis: 0.1
-  min_samples: 3
+  min_samples: 2
   max_samples: 100
   global_plan_overwrite_orientation: false
   allow_init_with_backwards_motion: false
@@ -20,14 +20,14 @@ TebLocalPlannerROS:
   max_global_plan_lookahead_dist: 5.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
-  force_reinit_new_goal_dist: 1.0
+  force_reinit_new_goal_dist: 0.5
   force_reinit_new_goal_angular: 0.78
   feasibility_check_no_poses: 30
   feasibility_check_lookahead_distance: 3
   publish_feedback: false
   min_resolution_collision_check_angular: 3.1415926
   control_look_ahead_poses: 1
-  prevent_look_ahead_poses_near_goal: 0
+  prevent_look_ahead_poses_near_goal: 5 # 当轨迹剩余未走的点 ≤5 个时，控制器禁用前视，只近距离跟踪，快速稳定停在目标。
 
   # Robot
   max_vel_x: 1.0
@@ -46,8 +46,8 @@ TebLocalPlannerROS:
   transform_tolerance: 0.3
 
   # GoalTolerance
-  xy_goal_tolerance: 0.32
-  yaw_goal_tolerance: 0.4
+  xy_goal_tolerance: 0.14
+  yaw_goal_tolerance: 0.15
   free_goal_vel: false
   trans_stopped_vel: 0.05
   theta_stopped_vel: 0.05
@@ -77,20 +77,19 @@ TebLocalPlannerROS:
   obstacle_proximity_upper_bound: 0.6
 
   # Optimization
-  # all default
-  # no_inner_iterations: 5
-  # no_outer_iterations: 4
+  no_inner_iterations: 10
+  no_outer_iterations: 8
   optimization_activate: true
   # optimization_verbose: false
-  penalty_epsilon: 0.15      #default 0.05
+  penalty_epsilon: 0.05      #default 0.05
   # weight_max_vel_x: 2
   # weight_max_vel_y: 2
   # weight_max_vel_theta: 1
   # weight_acc_lim_x: 1
   # weight_acc_lim_y: 1
   # weight_acc_lim_theta: 1
-  weight_kinematics_nh: 10   #default 1000
-  weight_kinematics_forward_drive: 50 #default 1
+  weight_kinematics_nh: 100   #default 1000
+  weight_kinematics_forward_drive: 20 #default 1
   weight_kinematics_turning_radius: 0 #default 1
   weight_optimaltime: 1
   weight_shortest_path: 9  #default 0
@@ -100,7 +99,7 @@ TebLocalPlannerROS:
   # weight_dynamic_obstacle_inflation: 0.1
   # weight_velocity_obstacle_ratio: 0
   weight_viapoint: 1        #default 1
-  weight_prefer_rotdir: 0   #default 50
+  weight_prefer_rotdir: 50   #default 50
   # weight_adapt_factor: 2
   # obstacle_cost_exponent: 1
 
@@ -138,7 +137,7 @@ TebLocalPlannerROS:
   # Recovery
   shrink_horizon_backup: false
   # shrink_horizon_min_duration: 
-  oscillation_recovery: false
+  oscillation_recovery: true
   # oscillation_v_eps: 
   # oscillation_omega_eps: 
   # oscillation_recovery_min_duration: 

@@ -620,6 +620,19 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
   const gatewayCtx = useGatewayContext();
   useGatewaySceneSync({ scene: sceneRef.current, snapshot: gatewayCtx.snapshot, navGoal: navGoal || gatewayCtx.snapshot?.runtime?.navGoal, skipVoxelGrid: connection?.isConnected() ?? false, skipMap: !!gatewayToken });
 
+  // 网关模式下：从遥测 tfPose 更新左下角机器人坐标（rosbridge 直连时 TF2JS 已经更新了）
+  useEffect(() => {
+    const tfPose = gatewayCtx.snapshot?.runtime?.tfPose;
+    if (!tfPose) return;
+    // TF2JS 有数据时优先用 TF（更精确），网关 tfPose 作为 fallback
+    if (robotPos && connection?.isConnected()) return;
+    setRobotPos({
+      x: tfPose.x,
+      y: tfPose.y,
+      theta: tfPose.yaw,
+    });
+  }, [gatewayCtx.snapshot?.runtime?.tfPose, connection]);
+
   // 网关模式下，将遥测地图数据注入 MapManager 供 OccupancyGridLayer 渲染
   const lastMapInjectedRef = useRef<string>('');
   useEffect(() => {

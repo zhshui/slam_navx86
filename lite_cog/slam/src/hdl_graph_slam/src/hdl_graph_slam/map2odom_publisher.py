@@ -39,7 +39,7 @@ def main():
 
 	node = Map2OdomPublisher(odom_frame_id, map_frame_id)	
 
-	rate = rospy.Rate(10.0)
+	rate = rospy.Rate(100.0)
 	while not rospy.is_shutdown():
 		node.spin()
 		rate.sleep()

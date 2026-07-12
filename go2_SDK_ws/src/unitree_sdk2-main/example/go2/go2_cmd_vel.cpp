@@ -123,7 +123,7 @@ public:
              raw_vx, raw_vy, raw_vyaw, vx, vy, vyaw);
   }
 
-  // ROS sport_cmd 回调: 接收 String 指令 (stand_up / sit / damp / stand_down / recovery_stand / stop_move / balance_stand)
+  // ROS sport_cmd 回调: 接收 String 指令 (stand_up / sit / damp / stand_down / recovery_stand / stop_move / balance_stand / classic_walk)
   void SportCmdCallback(const std_msgs::String::ConstPtr& msg)
   {
     std::string cmd = msg->data;
@@ -160,6 +160,9 @@ public:
     } else if (cmd == "hello") {
       sport_client.Hello();
       ROS_INFO(" -> Hello");
+    } else if (cmd == "classic_walk") {
+      sport_client.ClassicWalk();
+      ROS_INFO(" -> ClassicWalk");
     } else {
       ROS_WARN("Unknown sport_cmd: [%s]", cmd.c_str());
     }

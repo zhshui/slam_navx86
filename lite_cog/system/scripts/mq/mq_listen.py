@@ -25,7 +25,8 @@ ICONS = {
 }
 
 def show(topic, data):
-    topic_suffix = topic.split(".")[-1]
+    sep = "/" if MQ_TYPE == "mqtt" else "."
+    topic_suffix = topic.split(sep)[-1]
     if filter_type and topic_suffix != filter_type:
         return
     icon = ICONS.get(topic_suffix, "📡")
@@ -37,18 +38,45 @@ def show(topic, data):
 
 if MQ_TYPE == "mqtt":
     import paho.mqtt.client as mqtt
+    _connected = False
+    _connect_error = None
     def on_msg(client, userdata, msg):
         try: data = json.loads(msg.payload.decode("utf-8", errors="replace"))
         except: data = msg.payload.decode("utf-8", errors="replace")
         show(msg.topic, data)
+    def on_connect(client, userdata, flags, rc):
+        global _connected, _connect_error
+        if rc == 0:
+            _connected = True
+            client.subscribe(f"nav/{MQ_CLIENT_ID}/#")
+            print(f"✅ MQTT 已连接 {MQ_HOST}:{MQ_PORT}")
+        else:
+            _connect_error = rc
+            err_msg = {1:"协议版本错误",2:"ClientID 被拒",3:"服务器不可用",4:"用户名/密码错误",5:"未授权"}.get(rc, f"未知错误({rc})")
+            print(f"❌ MQTT 连接失败: {err_msg}")
     client = mqtt.Client(client_id=f"{MQ_CLIENT_ID}-listen", protocol=mqtt.MQTTv311)
     client.username_pw_set(MQ_USER, MQ_PASS)
     client.on_message = on_msg
-    client.connect(MQ_HOST, MQ_PORT, keepalive=60)
+    client.on_connect = on_connect
+    result = client.connect(MQ_HOST, MQ_PORT, keepalive=60)
+    # paho-mqtt v1.x connect() 返回 int (0=成功), v2.x 返回 MutableConnectResult
+    rc = result.rc if hasattr(result, 'rc') else result
+    if rc != 0:
+        print(f"❌ MQTT connect() 失败: rc={rc}")
+        sys.exit(1)
     client.loop_start()
-    client.subscribe(f"nav/{MQ_CLIENT_ID}/#")
     topic_hint = f"nav/{MQ_CLIENT_ID}/{filter_type or '#'}"
     print(f"👂 MQTT 监听 {topic_hint} (Ctrl+C 退出)")
+    # 等待连接建立（最多 5 秒）
+    waited = 0
+    while not _connected and waited < 50:
+        if _connect_error is not None:
+            print(f"❌ 无法连接 MQTT broker")
+            sys.exit(1)
+        time.sleep(0.1); waited += 0.1
+    if not _connected:
+        print(f"❌ 连接 MQTT broker 超时 (5s)")
+        sys.exit(1)
     try:
         while True: time.sleep(1)
     except KeyboardInterrupt:

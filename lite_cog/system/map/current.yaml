@@ -1,6 +1,6 @@
 image: current.pgm
 resolution: 0.1
-origin: [-2.36086, -5.29404, 0.0]
+origin: [-7.82516, -9.05996, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196

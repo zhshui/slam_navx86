@@ -31,8 +31,8 @@ const PARAM_DEFS: Record<string, ParamDef[]> = {
     { key: 'cost_scaling_factor',  label: '代价衰减系数',   min: 0.5,  max: 20, step: 0.5,  default: 10.0, unit: '',   desc: '代价指数衰减率，越小膨胀越硬、越大越软', apply: 'rosparam' },
   ],
   '到达判断': [
-    { key: 'xy_goal_tolerance',    label: '到达精度',       min: 0.02, max: 1.0, step: 0.02, default: 0.20, unit: 'm',  desc: '距目标点此距离内即判定到达', apply: 'rosparam' },
-    { key: 'yaw_goal_tolerance',   label: '朝向精度',       min: 0.05, max: 1.0, step: 0.05, default: 0.20, unit: 'rad', desc: '朝向误差此范围内即判定到达', apply: 'rosparam' },
+    { key: 'xy_goal_tolerance',    label: '到达精度',       min: 0.10, max: 1.0, step: 0.02, default: 0.10, unit: 'm',  desc: '距目标点此距离内即判定到达', apply: 'reconfigure' },
+    { key: 'yaw_goal_tolerance',   label: '朝向精度',       min: 0.05, max: 1.0, step: 0.05, default: 0.15, unit: 'rad', desc: '朝向误差此范围内即判定到达', apply: 'reconfigure' },
   ],
 };
 
@@ -101,7 +101,7 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
     saveValues(values);
   }, [values]);
 
-  const RESTART_PARAM_KEYS = new Set(['min_obstacle_height', 'max_obstacle_height', 'inflation_radius', 'cost_scaling_factor', 'xy_goal_tolerance', 'yaw_goal_tolerance']);
+  const RESTART_PARAM_KEYS = new Set(['min_obstacle_height', 'max_obstacle_height', 'inflation_radius', 'cost_scaling_factor']);
 
   const applyParam = useCallback(async (key: string, value: number, apply: ParamDef['apply']) => {
     if (apply === 'local') {

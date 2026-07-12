@@ -1,4 +1,23 @@
 <launch>
+  <!-- Filter LiDAR points within 30cm of robot body -->
+  <node name="livox_crop_box" pkg="nodelet" type="nodelet"
+        args="standalone pcl/CropBox" output="screen">
+    <remap from="~input"  to="/livox/lidar" />
+    <remap from="~output" to="/livox/lidar_nav" />
+    <rosparam>
+      input_frame: base_link
+      output_frame: livox_frame
+      negative: true
+      min_x: -0.3
+      max_x: 0.3
+      min_y: -0.3
+      max_y: 0.3
+      min_z: -10.0
+      max_z: 10.0
+      keep_organized: false
+    </rosparam>
+  </node>
+
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
         launch-prefix="/home/robot/go2_nav/lite_cog/system/scripts/nav/wait_for_deps.sh">
     <!-- global costmap -->

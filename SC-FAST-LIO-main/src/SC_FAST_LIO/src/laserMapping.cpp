@@ -98,6 +98,17 @@ bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 int lidar_type;
 
+/*** High-frequency IMU-propagated odometry ***/
+bool   hf_odom_inited = false;
+M3D    hf_R = Eye3d;
+V3D    hf_p = Zero3d;
+V3D    hf_v = Zero3d;
+double hf_state_time = 0;
+double hf_last_pub_time = 0;
+double hf_last_imu_time = 0;
+const double HF_ODOM_PERIOD = 0.01;  // 100Hz
+ros::Publisher pubImuOdom;
+
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
 vector<PointVector>  Nearest_Points; 
@@ -679,6 +690,137 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
 }
 
+void publish_high_freq_odom(const ros::Publisher &pub)
+{
+    double now = ros::Time::now().toSec();
+    if (now - hf_last_pub_time < HF_ODOM_PERIOD) return;
+    if (!hf_odom_inited || imu_buffer.empty()) return;
+
+    // Collect new IMU data since last propagation
+    std::vector<sensor_msgs::Imu::ConstPtr> new_imus;
+    {
+        std::lock_guard<std::mutex> lock(mtx_buffer);
+        for (const auto &imu : imu_buffer)
+        {
+            if (imu->header.stamp.toSec() > hf_last_imu_time)
+                new_imus.push_back(imu);
+        }
+    }
+
+    if (new_imus.empty())
+    {
+        // No new IMU data, just re-publish current state
+        nav_msgs::Odometry odom;
+        odom.header.frame_id = "camera_init";
+        odom.child_frame_id = "body";
+        odom.header.stamp = ros::Time().fromSec(hf_state_time);
+        odom.pose.pose.position.x = hf_p(0);
+        odom.pose.pose.position.y = hf_p(1);
+        odom.pose.pose.position.z = hf_p(2);
+        Eigen::Quaterniond q(hf_R);
+        odom.pose.pose.orientation.w = q.w();
+        odom.pose.pose.orientation.x = q.x();
+        odom.pose.pose.orientation.y = q.y();
+        odom.pose.pose.orientation.z = q.z();
+        odom.twist.twist.linear.x = hf_v(0);
+        odom.twist.twist.linear.y = hf_v(1);
+        odom.twist.twist.linear.z = hf_v(2);
+        pub.publish(odom);
+
+        static tf::TransformBroadcaster br;
+        tf::Transform transform;
+        transform.setOrigin(tf::Vector3(hf_p(0), hf_p(1), hf_p(2)));
+        tf::Quaternion q_tf(q.x(), q.y(), q.z(), q.w());
+        transform.setRotation(q_tf);
+        br.sendTransform(tf::StampedTransform(transform, odom.header.stamp, "camera_init", "body"));
+
+        hf_last_pub_time = now;
+        return;
+    }
+
+    // Forward integrate using new IMU data
+    M3D R = hf_R;
+    V3D p = hf_p;
+    V3D v = hf_v;
+    state_ikfom ref_state = kf.get_x();
+    V3D ba = ref_state.ba;
+    V3D bg = ref_state.bg;
+    V3D grav = ref_state.grav;
+    double imu_scale = G_m_s2 / p_imu->get_mean_acc().norm();
+
+    double last_t = hf_state_time;
+    V3D last_acc(0, 0, 0), last_gyro(0, 0, 0);
+    bool first = true;
+
+    for (const auto &imu : new_imus)
+    {
+        double t = imu->header.stamp.toSec();
+        V3D acc(imu->linear_acceleration.x, imu->linear_acceleration.y, imu->linear_acceleration.z);
+        V3D gyro(imu->angular_velocity.x, imu->angular_velocity.y, imu->angular_velocity.z);
+
+        if (!first)
+        {
+            double dt = t - last_t;
+            if (dt > 0 && dt < 0.1)
+            {
+                V3D gyro_avg = (last_gyro + gyro) * 0.5;
+                V3D acc_avg = (last_acc + acc) * 0.5 * imu_scale;
+
+                V3D omega = gyro_avg - bg;
+                V3D a_world = R * (acc_avg - ba) + grav;
+
+                // Euler forward integration
+                p = p + v * dt;
+                v = v + a_world * dt;
+                R = R * Exp(omega, dt);
+            }
+        }
+
+        last_t = t;
+        last_acc = acc;
+        last_gyro = gyro;
+        first = false;
+    }
+
+    // Update persistent state
+    hf_R = R;
+    hf_p = p;
+    hf_v = v;
+    hf_state_time = last_t;
+    hf_last_imu_time = last_t;
+
+    // Publish odometry
+    nav_msgs::Odometry odom;
+    odom.header.frame_id = "camera_init";
+    odom.child_frame_id = "body";
+    odom.header.stamp = ros::Time().fromSec(hf_state_time);
+
+    odom.pose.pose.position.x = hf_p(0);
+    odom.pose.pose.position.y = hf_p(1);
+    odom.pose.pose.position.z = hf_p(2);
+
+    Eigen::Quaterniond q(hf_R);
+    odom.pose.pose.orientation.w = q.w();
+    odom.pose.pose.orientation.x = q.x();
+    odom.pose.pose.orientation.y = q.y();
+    odom.pose.pose.orientation.z = q.z();
+
+    odom.twist.twist.linear.x = hf_v(0);
+    odom.twist.twist.linear.y = hf_v(1);
+    odom.twist.twist.linear.z = hf_v(2);
+
+    pub.publish(odom);
+
+    static tf::TransformBroadcaster br;
+    tf::Transform transform;
+    transform.setOrigin(tf::Vector3(hf_p(0), hf_p(1), hf_p(2)));
+    tf::Quaternion q_tf(q.x(), q.y(), q.z(), q.w());
+    transform.setRotation(q_tf);
+    br.sendTransform(tf::StampedTransform(transform, odom.header.stamp, "camera_init", "body"));
+
+    hf_last_pub_time = now;
+}
+
 void publish_path(const ros::Publisher pubPath)
 {
     set_posestamp(msg_body_pose);
@@ -942,9 +1084,11 @@ int main(int argc, char** argv)
             ("/cloud_effected", 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
             ("/Laser_map", 100000);
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>
             ("/Odometry", 100000);
-    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
+    pubImuOdom = nh.advertise<nav_msgs::Odometry>
+            ("/OdometryIMU", 100000);
+    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path>
             ("/path", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
@@ -1065,6 +1209,16 @@ int main(int argc, char** argv)
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
 
+            /*** Update anchor state for high-frequency IMU odometry ***/
+            {
+                hf_R = state_point.rot.toRotationMatrix();
+                hf_p = state_point.pos;
+                hf_v = state_point.vel;
+                hf_state_time = lidar_end_time;
+                hf_last_imu_time = lidar_end_time;
+                hf_odom_inited = true;
+            }
+
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
             map_incremental();
@@ -1109,6 +1263,7 @@ int main(int argc, char** argv)
         }
 
         status = ros::ok();
+        publish_high_freq_odom(pubImuOdom);
         rate.sleep();
     }
 

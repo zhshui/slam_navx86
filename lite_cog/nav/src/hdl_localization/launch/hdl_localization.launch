@@ -66,8 +66,9 @@
       <param name="use_global_localization" value="$(arg use_global_localization)" />
 
       <!-- NDT correction quality gate: reject bad scan matching to prevent UKF corruption -->
+      <!-- max_correction_dist=100 allows large initial corrections from origin -->
       <param name="require_ndt_convergence" value="true" />
-      <param name="max_correction_dist" value="2.0" />
+      <param name="max_correction_dist" value="100.0" />
       <param name="max_correction_angle" value="0.8" />
     </node>
 

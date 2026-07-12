@@ -61,6 +61,7 @@ class ImuProcess
   V3D cov_bias_acc;
   double first_lidar_time;
   int lidar_type;
+  V3D get_mean_acc() const { return mean_acc; }
 
  private:
   void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);

@@ -3,7 +3,7 @@
 MQ Adapter v3: RabbitMQ/MQTT ↔ ROS 导航桥接
 支持 AMQP (pika) 和 MQTT (paho-mqtt)，通过 MQ_TYPE 环境变量切换
 """
-import json, os, sqlite3, subprocess, threading, time, uuid, signal, math, yaml
+import json, os, sqlite3, subprocess, threading, time, uuid, signal, math
 from datetime import datetime, timezone
 import urllib.request
 from typing import Optional
@@ -43,35 +43,11 @@ TF_BODY_FRAME = os.environ.get("TF_BODY_FRAME", "base_link")
 _SEP = "/" if MQ_TYPE == "mqtt" else "."
 CMD_TOPIC = f"nav{_SEP}{MQ_CLIENT_ID}{_SEP}cmd"
 
-# ====== TEB goal tolerance（从配置文件读取，用于到达判断） ======
-# 默认值（会在 main() 中从 teb_local_planner_params.yaml 重新加载）
-XY_GOAL_TOLERANCE = 0.5
-YAW_GOAL_TOLERANCE = 0.6
-
-def _load_teb_tolerances():
-    """从 teb_local_planner_params.yaml 读取 xy_goal_tolerance / yaw_goal_tolerance"""
-    global XY_GOAL_TOLERANCE, YAW_GOAL_TOLERANCE
-    teb_cfg = os.environ.get("TEB_CONFIG",
-        os.path.join(NAV_ROOT, "lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml"))
-    try:
-        with open(teb_cfg, 'r') as f:
-            cfg = yaml.safe_load(f) or {}
-        teb = cfg.get("TebLocalPlannerROS", cfg)
-        XY_GOAL_TOLERANCE = float(teb.get("xy_goal_tolerance", XY_GOAL_TOLERANCE))
-        YAW_GOAL_TOLERANCE = float(teb.get("yaw_goal_tolerance", YAW_GOAL_TOLERANCE))
-        msg = f"[MQ] TEB goal tolerance loaded: xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
-        print(msg)
-        rospy.loginfo(msg)
-    except Exception as e:
-        msg = f"[MQ] Failed to load TEB config ({e}), using defaults xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
-        print(msg)
-        rospy.logwarn(msg)
-
 # ====== MQ 协议抽象 ======
 if MQ_TYPE == "mqtt":
     import paho.mqtt.client as mqtt_lib
 
-    _mq_client = mqtt_lib.Client(client_id=MQ_CLIENT_ID, clean_session=True, protocol=mqtt_lib.MQTTv311)
+    _mq_client = mqtt_lib.Client(client_id=MQ_CLIENT_ID, protocol=mqtt_lib.MQTTv311)
     _mq_client.username_pw_set(MQ_USER, MQ_PASS)
     _mq_pub_lock = threading.Lock()
     _mq_msg_queue = []  # 消费线程把消息放到这里
@@ -104,16 +80,6 @@ if MQ_TYPE == "mqtt":
         with _mq_msg_lock:
             _mq_msg_queue.append(msg)
 
-    def _on_mq_connect(client, userdata, flags, rc):
-        """每次（重）连接时重新订阅，防止 clean_session 导致订阅丢失"""
-        if rc == 0:
-            topic = f"nav/{MQ_CLIENT_ID}/cmd"
-            client.subscribe(topic, qos=2)
-            rospy.loginfo(f"[MQ] MQTT re-subscribed {topic}")
-        else:
-            rospy.logwarn(f"[MQ] MQTT connect failed rc={rc}")
-
-    _mq_client.on_connect = _on_mq_connect
     _mq_client.on_message = _on_mq_message
 
 else:
@@ -278,11 +244,6 @@ def h_nav_single(body, ref):
     if mid: _switch_and_init(mid)
     # 启动雷达 + 运控（等价于按下 Web 端按钮），gateway 已做幂等保护
     _ensure_lidar_and_motion()
-    # ★ 先重置到达状态 + 记录新目标，再启导航栈。
-    #    否则 gateway 变 running 后 pub loop 进入 _compute_motion_state()，
-    #    旧 _has_arrived=True 会被无条件冻结返回"到达"（最多 60s 直到下面的 reset 执行）。
-    with state.lock: state.last_goal = body
-    pub.reset_pose_history()
     # gateway 启导航栈 + 通过 gateway /api/nav/simple-goal 发 goal（和 web 2D Nav Goal 完全一致）
     # 始终用 "map" 坐标系，和 web 前端一致（camera_init 没有到 map 的 TF，move_base 会丢弃 goal）
     _gateway_nav_cmd("nav-only")
@@ -302,6 +263,7 @@ def h_nav_single(body, ref):
     rospy.loginfo(f"[MQ] simple-goal via gateway: ok={ok} x={x} y={y} yaw={yaw}")
     mq_publish("nav_points", {"header": _hdr("nav_points"),
         "body": {"points": [{"id": "goal", "x": float(x), "y": float(y), "yaw": float(yaw)}]}})
+    with state.lock: state.last_goal = body
     _ack(ref, "nav_single", "accepted")
 
 def h_nav_goal(body, ref):
@@ -320,9 +282,6 @@ def h_nav_goal(body, ref):
     mq_publish("nav_points", {"header": _hdr("nav_points"),
         "body": {"points": [{"id": "goal", "x": float(x), "y": float(y), "yaw": float(yaw)}]}})
     with state.lock: state.last_goal = body
-    pub.reset_pose_history()
-    # 标记"暂停后恢复"，使 Publisher 在 gateway 状态仍为 paused 时也计算实际运动状态
-    pub._resumed_after_pause = True
     _ack(ref, "nav_goal", "accepted")
 
 def h_nav_multi(body, ref):
@@ -346,14 +305,12 @@ def h_nav_multi(body, ref):
                 "yaw": float(wp.get("yaw", 0))} for i, wp in enumerate(wps)]
     mq_publish("nav_points", {"header": _hdr("nav_points"), "body": {"points": nav_pts}})
     # gateway 启导航栈 + Task.py，设状态为 running
-    pub.reset_pose_history()
     _gateway_nav_cmd("start")
     _ack(ref, "nav_multi", "accepted")
 
 def h_nav_pause(body, ref):
     mb.cancel()
     _gateway_nav_cmd("pause")
-    pub._resumed_after_pause = False  # 清除暂停恢复标记，正确报告"已暂停"
     _ack(ref, "nav_pause", "accepted")
 
 def h_nav_cancel(body, ref):
@@ -362,7 +319,6 @@ def h_nav_cancel(body, ref):
     _gateway_nav_cmd("stop")
     state.last_goal = None
     mb = MBClient()
-    pub._resumed_after_pause = False  # 清除暂停恢复标记
     _ack(ref, "nav_cancel", "accepted")
 
 def h_nav_resume(body, ref):
@@ -377,6 +333,35 @@ def h_relocalize(body, ref):
     if x is None or y is None or yaw is None:
         _ack(ref, "relocalize", "rejected", "need pose.x, pose.y, pose.yaw")
         return
+    
+    try:
+        _ensure_lidar_and_motion()
+    except Exception as e:
+        rospy.logwarn("_ensure_lidar_and_motion init failed...")
+        _ack(ref, "relocalize", "rejected", "lidar or motion init failed failed")
+        return
+    
+    if not mb.ok:
+        try:
+            _gateway_nav_cmd("nav-only")
+            # 輪詢等待 move_base action server 就緒（最多等 60 秒）
+            rospy.loginfo("[MQ] waiting for move_base action server...")
+            ready = False
+            for i in range(60):
+                if mb.connect(t=1):
+                    rospy.loginfo(f"[MQ] move_base ready (waited {i+1}s)")
+                    ready = True
+                    break
+                rospy.sleep(1.0)
+            if not ready:
+                rospy.logwarn("nav-only not ready after 60s")
+                _ack(ref, "relocalize", "rejected", "nav init failed")
+                return
+        except Exception as e:
+            rospy.logwarn("nav-only not ready after 60s")
+    else:
+        rospy.loginfo("nav-only already started...")
+    
     frame = body.get("frame_id", "map")
     if init_pub:
         ip = PoseWithCovarianceStamped()
@@ -530,20 +515,8 @@ class Publisher:
         self.sub_cmd_vel = None
         self.last_cmd_vel = None
         self.last_cmd_vel_time = 0.0
-        self._pose_history = []        # [(t, x, y, yaw), ...] 最近位置历史
-        self._start_pos = None         # (x, y) 收到目标时的位置，用于判断是否已起步
-        self._start_yaw = None         # 收到目标时的朝向(rad)，用于判断原地旋转起步
-        self._goal_received_at = 0.0   # 收到目标的时间戳
-        self._has_departed = False     # 是否已经离开起点足够远（含原地旋转）
+        self._pose_history = []        # [(t, x, y, yaw), ...] 最近 5 秒位置历史
         self._computed_nav_state = "idle"
-        self._has_arrived = False      # 到达目标后持久化，防止 plan 清空后状态被覆盖
-        self._last_arrived_goal_pos = None  # (x, y) 上次到达的目标点位置，用于防止旧路径误判
-        self._blocked_since = 0.0      # 阻塞条件首次满足的时间戳，0=未满足，用于 10s 持续判断
-        self._resumed_after_pause = False  # 暂停后通过 MQ nav_goal 恢复了运动
-        self._last_pub_pos = None      # (x, y) 上次发布的坐标，用于变化阈值判断
-        self._last_pub_yaw = None      # 上次发布的 yaw 角度
-        self._last_pub_status = None   # 上次发布的 nav_state，避免重复发布相同状态
-        self._last_route_hash = None    # 上次发布的 route 哈希，避免重复发布相同路径
     def _init(self):
         self.tf_listener = tf.TransformListener()
         self.sub = rospy.Subscriber("/move_base/GlobalPlanner/plan", Path, self._on_plan)
@@ -555,247 +528,69 @@ class Publisher:
     def _on_cmd_vel(self, m):
         self.last_cmd_vel = m
         self.last_cmd_vel_time = time.time()
-    def reset_pose_history(self):
-        """收到新目标时清空位姿历史，重置起步状态"""
-        self._pose_history.clear()
-        self._goal_received_at = time.time()
-        self._start_pos = None       # 下个循环从 TF 获取当前位置作为起点
-        self._start_yaw = None       # 下个循环从 TF 获取当前朝向作为起点
-        self._has_departed = False
-        self._has_arrived = False    # 新目标 → 重置到达状态
-        self._blocked_since = 0.0    # 新目标 → 重置阻塞计时
-        self.last_plan = None         # 清除旧规划路径
-        # 注意：不清除 _last_arrived_goal_pos，它用于防止旧路径重入时误判到达
-        self._last_pub_status = None  # 强制重新发布状态
     def _compute_motion_state(self):
-        """计算详细运动状态：运动中/阻塞/到达
-
-        20cm 直连距离分界线：
-        - dist_to_goal < 0.2m → 进入到达判定，跳过阻塞判定
-        - dist_to_goal >= 0.2m → 进入阻塞判定，跳过到达判定
-        """
+        """计算详细运动状态：就绪/运动中/阻塞/到达"""
         has_plan = self.last_plan is not None and len(self.last_plan.poses) > 0
         now = time.time()
-        ARRIVAL_GATE = 0.2  # 20cm：到达/阻塞互斥分界线
 
-        # 0) 计算当前位置到目标点的直连距离（TF 只查一次，后续复用）
-        cur_pos = None       # (x, y)
-        cur_ori = None       # quaternion [x,y,z,w]
-        dist_to_goal = None
-        goal_pt = None       # (x, y) 目标点坐标
+        # 1) 检查是否到达目标点
         if has_plan:
-            goal_pt = (self.last_plan.poses[-1].pose.position.x,
-                       self.last_plan.poses[-1].pose.position.y)
-        elif state.last_goal:
-            g = state.last_goal.get("goal", {})
-            if "x" in g and "y" in g:
-                goal_pt = (float(g["x"]), float(g["y"]))
-        if goal_pt is not None:
             try:
-                pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                cur_pos = (pos[0], pos[1])
-                cur_ori = ori
-                dist_to_goal = math.sqrt((cur_pos[0] - goal_pt[0])**2 + (cur_pos[1] - goal_pt[1])**2)
-            except: pass
-        near_goal = dist_to_goal is not None and dist_to_goal < ARRIVAL_GATE
-
-        # === 到达判定：只在 20cm 内才可能，已到达则跳过防止状态回退 ===
-        if has_plan and near_goal and not self._has_arrived:
-            if self._goal_received_at == 0.0:
-                self._goal_received_at = now
-            try:
-                # 计算目标点位置用于去重
-                is_same_goal = (
-                    self._last_arrived_goal_pos is not None and
-                    math.sqrt((goal_pt[0] - self._last_arrived_goal_pos[0])**2 +
-                              (goal_pt[1] - self._last_arrived_goal_pos[1])**2) < XY_GOAL_TOLERANCE
-                )
-                # 同一目标 + 未标记到达 = 收到新目标后旧路径重入，不触发到达
-                if is_same_goal and not self._has_arrived:
-                    pass  # fall through 到运动检测
-                else:
-                    _, _, cur_yaw = tf.transformations.euler_from_quaternion(
-                        [cur_ori[0], cur_ori[1], cur_ori[2], cur_ori[3]])
-                    target_yaw = None
-                    last_ori = self.last_plan.poses[-1].pose.orientation
-                    if not (abs(last_ori.x) < 1e-6 and abs(last_ori.y) < 1e-6 and
-                            abs(last_ori.z) < 1e-6 and abs(last_ori.w) < 1e-6):
-                        _, _, target_yaw = tf.transformations.euler_from_quaternion(
-                            [last_ori.x, last_ori.y, last_ori.z, last_ori.w])
-                    if target_yaw is None:
-                        lg = state.last_goal
-                        if lg:
-                            g = lg.get("goal", {})
-                            if "yaw" in g:
-                                target_yaw = float(g["yaw"])
-                    if target_yaw is not None:
-                        yaw_diff = abs(cur_yaw - target_yaw)
-                        yaw_diff = min(yaw_diff, 2 * math.pi - yaw_diff)
-                        if yaw_diff < YAW_GOAL_TOLERANCE:
-                            if not is_same_goal:
-                                self._last_arrived_goal_pos = goal_pt
-                            self._has_arrived = True
-                            return "到达"
-                        else:
-                            return "对齐中"
-                    else:
-                        if not is_same_goal:
-                            self._last_arrived_goal_pos = goal_pt
-                        self._has_arrived = True
-                        return "到达"
+                pos, _ = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                last_pt = self.last_plan.poses[-1].pose.position
+                dist = math.sqrt((pos[0] - last_pt.x)**2 + (pos[1] - last_pt.y)**2)
+                if dist < 0.3:
+                    return "到达"
             except: pass
 
-        # 1.5) 到达后状态冻结：防止机器人微小漂移导致状态在"到达/运动中"间振荡。
-        #       但如果当前 plan 指向的目标与上次到达的目标不同（新导航指令），
-        #       则清除到达标记，继续走下面的运动/阻塞判定。
-        if self._has_arrived:
-            if has_plan and self._last_arrived_goal_pos is not None:
-                try:
-                    new_goal = (self.last_plan.poses[-1].pose.position.x,
-                                self.last_plan.poses[-1].pose.position.y)
-                    same = (math.sqrt((new_goal[0] - self._last_arrived_goal_pos[0])**2 +
-                                      (new_goal[1] - self._last_arrived_goal_pos[1])**2)
-                            < XY_GOAL_TOLERANCE)
-                    if not same:
-                        # 目标已变更，重置到达状态，继续运动判定
-                        self._has_arrived = False
-                        self._last_arrived_goal_pos = None
-                except: pass
-            if self._has_arrived:
-                return "到达"
+        # 2) 无路线 → 就绪
+        if not has_plan:
+            return "就绪"
 
-        # 2) 有活跃目标时先记录起点位置与朝向（在阻塞判断前必须完成）
-        if self._start_pos is None and self._goal_received_at > 0:
-            if cur_pos is not None and cur_ori is not None:
-                self._start_pos = cur_pos
-                _, _, start_yaw = tf.transformations.euler_from_quaternion(
-                    [cur_ori[0], cur_ori[1], cur_ori[2], cur_ori[3]])
-                self._start_yaw = start_yaw
-            else:
-                try:
-                    pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                    self._start_pos = (pos[0], pos[1])
-                    _, _, start_yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                    self._start_yaw = start_yaw
-                except: pass
+        # 3) 检查 cmd_vel 是否有效（1 秒内有非零速度命令）
+        cmd_fresh = self.last_cmd_vel is not None and (now - self.last_cmd_vel_time) < 1.0
+        has_cmd = cmd_fresh and (
+            abs(self.last_cmd_vel.linear.x) > 0.02 or
+            abs(self.last_cmd_vel.linear.y) > 0.02 or
+            abs(self.last_cmd_vel.angular.z) > 0.02
+        )
 
-        # 4) 无路线且无活跃目标 → 运动中（等待规划）
-        if not has_plan and self._start_pos is None:
-            return "运动中"
+        if not has_cmd:
+            return "就绪"
 
-        # === 阻塞判定：只在 20cm 外才可能 ===
-        if not near_goal:
-            DEPART_DIST = 0.5        # 离开起点超过此距离才算已起步 (m)
-            BLOCK_WINDOW = 3.0       # 阻塞判断窗口（秒）
-            BLOCK_SPEED = 0.03       # 平均线速度低于此值视为卡死 (m/s)
-            GOAL_TIMEOUT = 5.0       # 收到目标后超时未起步也算阻塞 (s)
-            BLOCK_PERSIST = 10.0     # 阻塞条件需持续 10 秒才上报
-            is_blocked = False       # 本轮是否满足阻塞条件
-            try:
-                if cur_pos is None or cur_ori is None:
-                    pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                    cur_x, cur_y = pos[0], pos[1]
-                    _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                else:
-                    cur_x, cur_y = cur_pos
-                    _, _, yaw = tf.transformations.euler_from_quaternion(
-                        [cur_ori[0], cur_ori[1], cur_ori[2], cur_ori[3]])
+        # 4) 有路线 + 有速度命令 → 检查是否阻塞
+        try:
+            pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+            _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
+            self._pose_history.append((now, pos[0], pos[1], yaw))
+            # 只保留最近 5 秒
+            self._pose_history = [p for p in self._pose_history if now - p[0] < 5.0]
 
-                # 首次记录起点（step 2 中 TF 查询失败时的 fallback）
-                if self._start_pos is None:
-                    self._start_pos = (cur_x, cur_y)
-                    self._start_yaw = yaw
-
-                # 判断是否已离开起点（平移 + 原地旋转都算"起步"）
-                if not self._has_departed:
-                    dist_from_start = math.sqrt((cur_x - self._start_pos[0])**2 + (cur_y - self._start_pos[1])**2)
-                    yaw_from_start = 0.0
-                    if self._start_yaw is not None:
-                        yaw_from_start = abs(yaw - self._start_yaw)
-                        yaw_from_start = min(yaw_from_start, 2 * math.pi - yaw_from_start)
-                    YAW_DEPART_THRESH = 0.3  # 旋转超过 ~17° 视为已起步
-                    if dist_from_start >= DEPART_DIST or yaw_from_start >= YAW_DEPART_THRESH:
-                        self._has_departed = True
-                        self._pose_history.clear()  # 清空起步前静止采样，阻塞判定只看起步后的运动
-                    elif self._goal_received_at > 0 and now - self._goal_received_at > GOAL_TIMEOUT and not has_plan:
-                        is_blocked = True  # 超时无路径 → 阻塞条件满足
-                    # else: 未起步未超时 → 不阻塞，is_blocked 保持 False
-
-                else:
-                    # 已起步 → 检查是否在足够长的时间内位移过小
-                    if len(self._pose_history) >= 5:
-                        first = self._pose_history[0]
-                        last_ph = self._pose_history[-1]
-                        dt_hist = last_ph[0] - first[0]
-                        if dt_hist >= BLOCK_WINDOW:
-                            dx = last_ph[1] - first[1]
-                            dy = last_ph[2] - first[2]
-                            avg_speed = math.sqrt(dx*dx + dy*dy) / dt_hist
-                            if avg_speed < BLOCK_SPEED:
-                                is_blocked = True
-                            else:
-                                # 原地旋转检查：几乎不移动但角速度明显 → 卡住原地转
-                                dyaw = abs(last_ph[3] - first[3])
-                                dyaw = min(dyaw, 2 * math.pi - dyaw)
-                                avg_angular = dyaw / dt_hist
-                                if avg_speed < 0.05 and avg_angular > 0.2:
-                                    is_blocked = True
-            except: pass
-
-            # 阻塞条件需持续 BLOCK_PERSIST 秒才上报
-            if is_blocked:
-                if self._blocked_since == 0.0:
-                    self._blocked_since = now
-                elif now - self._blocked_since >= BLOCK_PERSIST:
+            if len(self._pose_history) >= 3:
+                first = self._pose_history[0]
+                last_ph = self._pose_history[-1]
+                dx = last_ph[1] - first[1]
+                dy = last_ph[2] - first[2]
+                displacement = math.sqrt(dx*dx + dy*dy)
+                dt = last_ph[0] - first[0]
+                if dt > 2.0 and displacement < 0.15:
                     return "阻塞"
-                # 未满 10 秒 → 继续返回运动中，累积计时
-            else:
-                self._blocked_since = 0.0  # 条件不满足 → 重置计时
+        except: pass
 
         return "运动中"
     def run(self):
         self._init()
         self._run = True
-        self._goal_received_at = 0.0   # 0 表示未收到目标，阻塞判断不生效
         last_hb = 0
-        POS_THRESHOLD = 0.05   # 位置变化超过 5cm 才发送
-        YAW_THRESHOLD = 0.05   # 角度变化超过 ~2.86° 才发送
-        POSE_FORCE_INTERVAL = 5.0  # 即使无变化，每 5 秒强制发送一次
-        STATUS_FORCE_INTERVAL = 2.0  # 状态即使无变化，每 2 秒也强制发送一次
-        self._last_pub_pos = None
-        self._last_pub_yaw = None
-        self._last_pose_force = 0.0
-        self._last_status_force = 0.0
         while self._run and not rospy.is_shutdown():
             now = time.time()
             try:
                 pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
                 roll, pitch, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                # 更新位姿历史（用于阻塞判断）
-                self._pose_history.append((now, pos[0], pos[1], yaw))
-                self._pose_history = [p for p in self._pose_history if now - p[0] < 5.0]
-                # 变化阈值判断：位置或角度变化足够大，或超过强制发送间隔
-                should_pub = False
-                if self._last_pub_pos is None or self._last_pub_yaw is None:
-                    should_pub = True  # 首次发送
-                else:
-                    dx = pos[0] - self._last_pub_pos[0]
-                    dy = pos[1] - self._last_pub_pos[1]
-                    dist_moved = math.sqrt(dx*dx + dy*dy)
-                    yaw_diff = abs(yaw - self._last_pub_yaw)
-                    yaw_diff = min(yaw_diff, 2 * math.pi - yaw_diff)  # 角度环绕
-                    if dist_moved >= POS_THRESHOLD or yaw_diff >= YAW_THRESHOLD:
-                        should_pub = True
-                    elif now - self._last_pose_force >= POSE_FORCE_INTERVAL:
-                        should_pub = True  # 超时强制发送
-                if should_pub:
-                    self._publish("pose", {"header": _hdr("nav_pose"),
-                        "body": {"frame_id": TF_MAP_FRAME, "position": {"x":pos[0],"y":pos[1],"z":pos[2]},
-                                 "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
-                                 "localization_quality": "good"}})
-                    self._last_pub_pos = (pos[0], pos[1])
-                    self._last_pub_yaw = yaw
-                    self._last_pose_force = now
+                self._publish("pose", {"header": _hdr("nav_pose"),
+                    "body": {"frame_id": TF_MAP_FRAME, "position": {"x":pos[0],"y":pos[1],"z":pos[2]},
+                             "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
+                             "localization_quality": "good"}})
             except: pass
             try:
                 # 从 gateway 读唯一状态值，不维护本地副本
@@ -816,68 +611,36 @@ class Publisher:
                                 gw_nav = "loc_lost"  # 导航中但定位丢失
                     except: pass
                 self._gw_nav = gw_nav  # 保留原始 gateway 状态
-                if gw_nav == "running":
-                    computed = self._compute_motion_state()
-                elif self._resumed_after_pause:
-                    # MQ nav_goal 直接发给 move_base，不改变 gateway 状态。
-                    # 无论 gateway 是 paused/idle/stopped，只要 nav_goal 已发送，
-                    # 就应该根据实际运动状态计算，而非僵死报告 gateway 状态。
-                    computed = self._compute_motion_state()
-                else:
-                    # gateway 非 running 且无 nav_goal 恢复标记：
-                    # - 已到达 → 保持"到达"不变，直到收到新目标
-                    # - 未到达 → 跟随 gateway 状态
-                    if self._has_arrived:
-                        computed = "到达"
-                    else:
-                        computed = gw_nav
-                # gateway 切换到 running 后第一分支接管，清除恢复标记；
-                # 其他非 running 状态保留标记，让第二分支继续计算运动状态。
-                # 到达后也清除：nav_goal 导航已完成。
-                if gw_nav == "running" or computed == "到达":
-                    self._resumed_after_pause = False
+                computed = self._compute_motion_state() if gw_nav == "running" else gw_nav
                 self._computed_nav_state = computed
-                # 状态变化时立即发布，且每 STATUS_FORCE_INTERVAL 秒强制发送一次
-                if computed != self._last_pub_status or now - self._last_status_force >= STATUS_FORCE_INTERVAL:
-                    self._publish("status", {"header": _hdr("nav_status"),
-                        "body": {"nav_state": computed, "current_cmd": gw_cmd,
-                                 "current_cmd_id": "", "current_map": state.current_map}})
-                    self._last_pub_status = computed
-                    self._last_status_force = now
+                self._publish("status", {"header": _hdr("nav_status"),
+                    "body": {"nav_state": computed, "current_cmd": gw_cmd,
+                             "current_cmd_id": "", "current_map": state.current_map}})
             except: pass
             try:
                 if self.last_plan and self.last_plan.poses:
-                    # 只在路径变化时发布 route（比较路径长度+首尾坐标）
-                    route_key = (len(self.last_plan.poses),
-                                 self.last_plan.poses[0].pose.position.x,
-                                 self.last_plan.poses[0].pose.position.y,
-                                 self.last_plan.poses[-1].pose.position.x,
-                                 self.last_plan.poses[-1].pose.position.y)
-                    route_hash = hash(route_key)
-                    if route_hash != self._last_route_hash:
-                        self._last_route_hash = route_hash
-                        pts_raw = [{"x":p.pose.position.x,"y":p.pose.position.y} for p in self.last_plan.poses[:200]]
-                        # 计算路径长度
-                        path_len = 0.0
-                        for i in range(1, len(pts_raw)):
-                            dx = pts_raw[i]["x"] - pts_raw[i-1]["x"]
-                            dy = pts_raw[i]["y"] - pts_raw[i-1]["y"]
-                            path_len += (dx*dx + dy*dy) ** 0.5
-                        # source: 当前位置, target: 最后目标点
-                        source = {"x": 0.0, "y": 0.0, "yaw": 0.0}
-                        target = {"x": 0.0, "y": 0.0, "yaw": 0.0}
-                        try:
-                            pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                            _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                            source = {"x": round(pos[0], 3), "y": round(pos[1], 3), "yaw": round(yaw, 4)}
-                        except: pass
-                        lg = state.last_goal
-                        if lg:
-                            g = lg.get("goal", {})
-                            target = {"x": float(g.get("x", 0)), "y": float(g.get("y", 0)), "yaw": float(g.get("yaw", 0))}
-                        self._publish("route", {"header": _hdr("nav_route"),
-                            "body": {"route_id": str(uuid.uuid4()), "source": source, "target": target,
-                                     "path": pts_raw, "path_length": round(path_len, 2)}})
+                    pts_raw = [{"x":p.pose.position.x,"y":p.pose.position.y} for p in self.last_plan.poses[:200]]
+                    # 计算路径长度
+                    path_len = 0.0
+                    for i in range(1, len(pts_raw)):
+                        dx = pts_raw[i]["x"] - pts_raw[i-1]["x"]
+                        dy = pts_raw[i]["y"] - pts_raw[i-1]["y"]
+                        path_len += (dx*dx + dy*dy) ** 0.5
+                    # source: 当前位置, target: 最后目标点
+                    source = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+                    target = {"x": 0.0, "y": 0.0, "yaw": 0.0}
+                    try:
+                        pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                        _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
+                        source = {"x": round(pos[0], 3), "y": round(pos[1], 3), "yaw": round(yaw, 4)}
+                    except: pass
+                    lg = state.last_goal
+                    if lg:
+                        g = lg.get("goal", {})
+                        target = {"x": float(g.get("x", 0)), "y": float(g.get("y", 0)), "yaw": float(g.get("yaw", 0))}
+                    self._publish("route", {"header": _hdr("nav_route"),
+                        "body": {"route_id": str(uuid.uuid4()), "source": source, "target": target,
+                                 "path": pts_raw, "path_length": round(path_len, 2)}})
             except: pass
             if now - last_hb >= 5:
                 last_hb = now
@@ -938,32 +701,19 @@ class Consumer:
 consumer = Consumer()
 
 def _read_active_map():
-    """启动时从 active/current.txt 读取当前加载的地图，并校验是否在 DB 中"""
+    """启动时从 active/current.txt 读取当前加载的地图"""
     try:
         active_txt = os.path.join(NAV_ROOT, "lite_cog/system/map/active/current.txt")
-        name = ""
         with open(active_txt) as f:
             for line in f:
                 if line.startswith("NAME="):
-                    name = line.strip().split("=", 1)[1]
-                    break
-        if not name:
-            return ""
-        # 校验：该地图名必须在数据库中存在，否则视为无效
-        maps = get_map_list()
-        valid = any(m["name"] == name for m in maps)
-        if valid:
-            return name
-        else:
-            rospy.logwarn(f"[MQ] active map '{name}' not found in DB, ignoring")
-            return ""
+                    return line.strip().split("=", 1)[1]
     except: pass
     return ""
 
 def main():
     global init_pub
     rospy.init_node("mq_adapter"); rospy.loginfo(f"[MQ] starting... (type={MQ_TYPE})")
-    _load_teb_tolerances()
     mq_connect()
     init_pub = rospy.Publisher("/initialpose", PoseWithCovarianceStamped, queue_size=1, latch=True)
     mb.connect()
