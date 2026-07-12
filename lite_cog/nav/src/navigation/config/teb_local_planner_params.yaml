@@ -11,7 +11,7 @@ TebLocalPlannerROS:
   teb_autosize: true
   dt_ref: 0.5
   dt_hysteresis: 0.1
-  min_samples: 2
+  min_samples: 3
   max_samples: 100
   global_plan_overwrite_orientation: false
   allow_init_with_backwards_motion: false
@@ -47,11 +47,13 @@ TebLocalPlannerROS:
 
   # GoalTolerance
   xy_goal_tolerance: 0.14
-  yaw_goal_tolerance: 0.15
+  yaw_goal_tolerance: 0.05
   free_goal_vel: false
   trans_stopped_vel: 0.05
   theta_stopped_vel: 0.05
   complete_global_plan: false
+  arrival_debounce_cycles: 10 # 到达防抖：连续10个周期(10Hz下=1秒)满足到达条件才判定到达，防止定位噪声误触发
+  arrival_hold_cycles: 15     # 到达保持：防抖通过后继续主动控制15个周期(1.5秒)，确保机器人稳定停在目标点
 
   # Obstacles
   min_obstacle_dist: 0.15

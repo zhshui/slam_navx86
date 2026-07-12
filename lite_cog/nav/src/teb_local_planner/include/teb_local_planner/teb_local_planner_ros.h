@@ -282,6 +282,12 @@ protected:
     */
   void customViaPointsCB(const nav_msgs::Path::ConstPtr& via_points_msg);
 
+  /**
+   * @brief Callback for receiving the user's original goal pose from move_base/current_goal
+   * @param goal_msg pointer to the message containing the goal pose
+   */
+  void userGoalCB(const geometry_msgs::PoseStamped::ConstPtr& goal_msg);
+
    /**
     * @brief Prune global plan such that already passed poses are cut off
     * 
@@ -425,10 +431,16 @@ private:
   bool custom_via_points_active_; //!< Keep track whether valid via-points have been received from via_points_sub_
   boost::mutex via_point_mutex_; //!< Mutex that locks the via_points container (multi-threaded)
 
+  ros::Subscriber user_goal_sub_; //!< Subscriber for user's original goal pose (from move_base/current_goal)
+  geometry_msgs::PoseStamped user_goal_pose_; //!< Store the user's original goal pose (preserves user-specified yaw)
+  bool user_goal_received_; //!< Flag whether user goal has been received
+
   PoseSE2 robot_pose_; //!< Store current robot pose
   PoseSE2 robot_goal_; //!< Store current robot goal
   geometry_msgs::Twist robot_vel_; //!< Store current robot translational and angular velocity (vx, vy, omega)
   bool goal_reached_; //!< store whether the goal is reached or not
+  int arrival_consistent_count_; //!< counter for consecutive cycles meeting goal conditions (debounce)
+  int arrival_hold_count_; //!< counter for hold cycles after debounce passes
   ros::Time time_last_infeasible_plan_; //!< Store at which time stamp the last infeasible plan was detected
   int no_infeasible_plans_; //!< Store how many times in a row the planner failed to find a feasible plan.
   ros::Time time_last_oscillation_; //!< Store at which time stamp the last oscillation was detected

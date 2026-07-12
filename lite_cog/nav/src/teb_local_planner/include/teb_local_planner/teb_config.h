@@ -121,6 +121,8 @@ public:
     double trans_stopped_vel; //!< Below what maximum velocity we consider the robot to be stopped in translation
     double theta_stopped_vel; //!< Below what maximum rotation velocity we consider the robot to be stopped in rotation
     bool complete_global_plan; // true prevents the robot from ending the path early when it cross the end goal
+    int arrival_debounce_cycles; //!< Number of consecutive controller cycles the goal conditions must be met before declaring arrival (0 = disabled, immediate arrival)
+    int arrival_hold_cycles; //!< After debounce passes, continue actively controlling for this many extra cycles before reporting success (0 = disabled)
   } goal_tolerance; //!< Goal tolerance related parameters
 
   //! Obstacle related parameters
@@ -299,6 +301,8 @@ public:
     goal_tolerance.trans_stopped_vel = 0.1;
     goal_tolerance.theta_stopped_vel = 0.1;
     goal_tolerance.complete_global_plan = true;
+    goal_tolerance.arrival_debounce_cycles = 0;
+    goal_tolerance.arrival_hold_cycles = 0;
 
     // Obstacles
 

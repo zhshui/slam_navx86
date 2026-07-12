@@ -94,6 +94,8 @@ void TebConfig::loadRosParamFromNodeHandle(const ros::NodeHandle& nh)
   nh.param("trans_stopped_vel", goal_tolerance.trans_stopped_vel, goal_tolerance.trans_stopped_vel);
   nh.param("theta_stopped_vel", goal_tolerance.theta_stopped_vel, goal_tolerance.theta_stopped_vel);
   nh.param("complete_global_plan", goal_tolerance.complete_global_plan, goal_tolerance.complete_global_plan);
+  nh.param("arrival_debounce_cycles", goal_tolerance.arrival_debounce_cycles, goal_tolerance.arrival_debounce_cycles);
+  nh.param("arrival_hold_cycles", goal_tolerance.arrival_hold_cycles, goal_tolerance.arrival_hold_cycles);
 
   // Obstacles
   nh.param("min_obstacle_dist", obstacles.min_obstacle_dist, obstacles.min_obstacle_dist);
@@ -231,6 +233,8 @@ void TebConfig::reconfigure(TebLocalPlannerReconfigureConfig& cfg)
   goal_tolerance.free_goal_vel = cfg.free_goal_vel;
   goal_tolerance.trans_stopped_vel = cfg.trans_stopped_vel;
   goal_tolerance.theta_stopped_vel = cfg.theta_stopped_vel;
+  goal_tolerance.arrival_debounce_cycles = cfg.arrival_debounce_cycles;
+  goal_tolerance.arrival_hold_cycles = cfg.arrival_hold_cycles;
 
   // Obstacles
   obstacles.min_obstacle_dist = cfg.min_obstacle_dist;
