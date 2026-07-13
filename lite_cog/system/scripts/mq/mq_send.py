@@ -14,8 +14,8 @@ import json
 MSG = json.dumps({
   "header": { "msg_type": "cmd" },
   "body": {
-    "cmd": "switch_map",
-    "map_id": "00"
+    "cmd": "nav_goal",
+    "goal": { "x": 1.55, "y": 0.039 ,"yaw": 1.57, "frame_id": "map" }
   }
   })
 # ═══════════════════════════════════════════════════════════════
