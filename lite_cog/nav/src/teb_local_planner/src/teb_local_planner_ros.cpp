@@ -595,7 +595,7 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
       cmd_vel.twist.angular.z = 0.0;
     }
 
-    double k_p_xy = 1.2;
+    double k_p_xy = 0.8;
     cmd_vel.twist.linear.x = k_p_xy * dx_goal;  // REPLACE
     cmd_vel.twist.linear.y = k_p_xy * dy_goal;
 

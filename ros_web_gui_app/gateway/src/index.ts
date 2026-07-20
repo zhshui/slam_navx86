@@ -5,7 +5,7 @@ import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 import multer from 'multer'
 import bcrypt from 'bcryptjs'
 import { createServer } from 'node:http'
-import { mkdirSync, copyFileSync, existsSync, writeFileSync, readdirSync, readFileSync, unlinkSync, rmdirSync, renameSync, statSync } from 'node:fs'
+import { mkdirSync, copyFileSync, existsSync, writeFileSync, readdirSync, readFileSync, unlinkSync, rmdirSync, renameSync, statSync, createReadStream } from 'node:fs'
 import { freemem, totalmem, loadavg } from 'node:os'
 import { deflateSync } from 'node:zlib'
 import { spawn, exec, execFile, execSync, type ChildProcess } from 'node:child_process'
@@ -812,9 +812,18 @@ app.get('/api/maps/:id/export', requireAuth, (req, res) => {
   try {
     const tmpZip = `/tmp/map_export_${row.name}_${Date.now()}.zip`
     // 打包整个地图文件夹（包含 .yaml .pgm .pcd 等所有文件）
-    execSync(`cd "${path.dirname(folder)}" && zip -r "${tmpZip}" "${path.basename(folder)}"`, { timeout: 30000 })
-    res.download(tmpZip, `${row.name}.zip`, () => {
-      // 下载完成后清理临时文件
+    execSync(`cd "${path.dirname(folder)}" && zip -0 -r "${tmpZip}" "${path.basename(folder)}"`, { timeout: 600_000 })
+    // 用流式发送替代 res.download()，避免远程慢速下载时回调提前触发删文件
+    const fileStat = statSync(tmpZip)
+    const safeName = encodeURIComponent(row.name) + '.zip'
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename*=UTF-8''${safeName}`,
+      'Content-Length': fileStat.size,
+    })
+    const stream = createReadStream(tmpZip)
+    stream.pipe(res)
+    res.on('close', () => {
       try { unlinkSync(tmpZip) } catch {}
     })
   } catch (e: any) {
@@ -1725,6 +1734,9 @@ setInterval(() => {
     { key: 'voxelGrid',    val: runtimeState.voxelGrid },
     { key: 'navStatus',    val: runtimeState.navStatus },
     { key: 'navMode',      val: runtimeState.navMode },
+    { key: 'controlSource', val: runtimeState.controlSource },
+    { key: 'battery',      val: runtimeState.battery },
+    { key: 'bodyState',    val: runtimeState.bodyState },
     { key: 'hdlRunning',   val: runtimeState.hdlRunning },
     { key: 'lastTfAt',     val: runtimeState.lastTfAt },
     { key: 'lastVoxelAt',  val: runtimeState.lastVoxelAt },
