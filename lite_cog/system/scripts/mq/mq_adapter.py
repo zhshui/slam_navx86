@@ -15,6 +15,7 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, Twist
 from std_msgs.msg import String as RosString
+from sensor_msgs.msg import PointCloud2
 
 # ====== 默认环境变量（可通过 export 覆盖） ======
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -551,12 +552,19 @@ class Publisher:
         self._last_pub_status = None   # 上次发布的 nav_state，避免重复发布相同状态
         self._last_route_hash = None    # 上次发布的 route 哈希，避免重复发布相同路径
         self._last_local_route_hash = None  # 上次发布的 local_route 哈希
+        self._last_voxel_at = 0.0       # voxel_grid 最后接收时间，用于定位状态判断
+        self._last_tf_at = 0.0          # TF 最后成功查询时间
+        self.sub_voxel = None           # voxel_grid 订阅器
     def _init(self):
         self.tf_listener = tf.TransformListener()
         self.sub = rospy.Subscriber("/move_base/GlobalPlanner/plan", Path, self._on_plan)
         self.sub_local_plan = rospy.Subscriber("/move_base/TebLocalPlannerROS/local_plan", Path, self._on_local_plan)
         self.sub_cmd_vel = rospy.Subscriber("/cmd_vel", Twist, self._on_cmd_vel)
         self.sub_simple_goal = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self._on_simple_goal)
+        self.sub_voxel = rospy.Subscriber("/move_base/local_costmap/stvl_obstacle_layer/voxel_grid",
+                                          PointCloud2, self._on_voxel)
+    def _on_voxel(self, m):
+        self._last_voxel_at = time.time()
     def _publish(self, topic_suffix, body):
         """线程安全发布"""
         mq_publish(topic_suffix, body)
@@ -861,6 +869,7 @@ class Publisher:
             now = time.time()
             try:
                 pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                self._last_tf_at = now  # TF 查询成功，更新时间戳
                 roll, pitch, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
                 # 更新位姿历史（用于阻塞判断）
                 self._pose_history.append((now, pos[0], pos[1], yaw))
@@ -880,10 +889,20 @@ class Publisher:
                     elif now - self._last_pose_force >= POSE_FORCE_INTERVAL:
                         should_pub = True  # 超时强制发送
                 if should_pub:
+                    # 定位状态：与 Web 端一致（voxel_grid 3秒内 → 就绪 → TF 2秒内 → 仅TF → 丢失）
+                    voxel_age = now - self._last_voxel_at if self._last_voxel_at > 0 else 99999
+                    tf_age = now - self._last_tf_at if self._last_tf_at > 0 else 99999
+                    if voxel_age < 3.0:
+                        location_status = "就绪"
+                    elif tf_age < 2.0:
+                        location_status = "仅TF"
+                    else:
+                        location_status = "丢失"
                     self._publish("pose", {"header": _hdr("nav_pose"),
                         "body": {"frame_id": TF_MAP_FRAME, "position": {"x":pos[0],"y":pos[1],"z":pos[2]},
                                  "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
-                                 "localization_quality": "good"}})
+                                 "localization_quality": "good",
+                                 "location_status": location_status}})
                     self._last_pub_pos = (pos[0], pos[1])
                     self._last_pub_yaw = yaw
                     self._last_pose_force = now

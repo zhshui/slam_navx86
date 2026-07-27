@@ -68,8 +68,8 @@ stvl_obstacle_layer:
 sob_layer:
   enabled: true
   inflate_unknown: false
-  inscribed_radius: 0.15
-  inflation_radius: 0.2
+  inscribed_radius: 0.4
+  inflation_radius: 0.6
   cost_scaling_factor: 10
 
 
