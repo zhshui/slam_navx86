@@ -53,12 +53,14 @@
 #include <teb_local_planner/optimal_planner.h>
 #include <teb_local_planner/homotopy_class_planner.h>
 #include <teb_local_planner/visualization.h>
+#include <teb_local_planner/terminal_pid.h>
 #include <teb_local_planner/recovery_behaviors.h>
 
 // message types
 #include <nav_msgs/Path.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <std_msgs/String.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <visualization_msgs/Marker.h>
 #include <costmap_converter/ObstacleMsg.h>
@@ -399,6 +401,8 @@ protected:
 
   
 private:
+  void publishNavigationState(const std::string& state);
+
   // Definition of member variables
 
   // external objects (store weak pointers)
@@ -430,10 +434,22 @@ private:
   ros::Subscriber via_points_sub_; //!< Subscriber for custom via-points received via a Path msg.
   bool custom_via_points_active_; //!< Keep track whether valid via-points have been received from via_points_sub_
   boost::mutex via_point_mutex_; //!< Mutex that locks the via_points container (multi-threaded)
+  boost::mutex goal_state_mutex_; //!< Serializes goal callbacks with controller state updates
 
   ros::Subscriber user_goal_sub_; //!< Subscriber for user's original goal pose (from move_base/current_goal)
+  ros::Publisher navigation_state_pub_; //!< Detailed controller state for MQ/Web consumers
+  std::string navigation_state_; //!< Last published detailed controller state
   geometry_msgs::PoseStamped user_goal_pose_; //!< Store the user's original goal pose (preserves user-specified yaw)
   bool user_goal_received_; //!< Flag whether user goal has been received
+  bool initial_path_alignment_pending_; //!< Rotate to the path heading once before translating for a new goal
+  TerminalPidController initial_alignment_pid_; //!< Yaw PID for initial path alignment
+  ros::Time initial_alignment_pid_last_time_; //!< Last initial alignment PID update time
+  bool path_heading_initialized_; //!< Whether the filtered global path heading is valid
+  double smoothed_path_heading_; //!< Filtered local goal yaw used during path tracking
+  int cruise_yaw_direction_; //!< Last accepted yaw direction for cruise hysteresis
+  bool terminal_convergence_active_; //!< Latch terminal PID until a large position displacement
+  TerminalPidController terminal_pid_; //!< Independent XY/yaw controller used near the goal
+  ros::Time terminal_pid_last_time_; //!< Last terminal PID update time
 
   PoseSE2 robot_pose_; //!< Store current robot pose
   PoseSE2 robot_goal_; //!< Store current robot goal
@@ -465,5 +481,3 @@ public:
 }; // end namespace teb_local_planner
 
 #endif // TEB_LOCAL_PLANNER_ROS_H_
-
-

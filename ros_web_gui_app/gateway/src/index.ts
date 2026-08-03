@@ -27,7 +27,7 @@ const MQ_USER = process.env.MQ_USER || 'nav'
 const MQ_PASS = process.env.MQ_PASS || 'nav123'
 const MQ_VHOST = process.env.MQ_VHOST || '/'
 const MQ_EXCHANGE = process.env.MQ_EXCHANGE || 'nav.exchange'
-const MQ_CLIENT_ID = process.env.MQ_CLIENT_ID || 'B42D1000P3499GGW' //默认: robot-001 
+const MQ_CLIENT_ID = process.env.MQ_CLIENT_ID || 'B42D4000Q3K87FG1' //默认: robot-001 
 let mqChannel: Channel | null = null
 let mqConn: any = null
 let lastMqPoseAt = 0   // MQ 位姿最后更新时间戳
@@ -147,11 +147,11 @@ const PORT = Number(process.env.GATEWAY_PORT ?? 8080)
 const mapDir = path.resolve(process.cwd(), 'data', 'maps')
 const navGoalRateWindowMs = Number(process.env.NAV_GOAL_RATE_LIMIT_WINDOW_MS ?? 5000)
 const navGoalRateLimitCount = Number(process.env.NAV_GOAL_RATE_LIMIT_COUNT ?? 20)
-const SLAM_SCRIPT = process.env.SLAM_START_SCRIPT || '/home/robot/go2_nav/SC-FAST-LIO-main/start_slam.sh'
-const NAV_SCRIPT  = process.env.NAV_START_SCRIPT  || '/home/robot/go2_nav/lite_cog/system/scripts/nav/start_nav.sh'
-const TASK_SCRIPT = process.env.TASK_START_SCRIPT || '/home/robot/go2_nav/lite_cog/pipeline/src/pipeline_tracking/scripts/Task.py'
-const LIDAR_SCRIPT = process.env.LIDAR_START_SCRIPT || '/home/robot/go2_nav/lite_cog/system/scripts/lidar/start_lidar.sh'
-const MOTION_SCRIPT = process.env.MOTION_START_SCRIPT || '/home/robot/go2_nav/go2_SDK_ws/go2_cmd_vel.sh'
+const SLAM_SCRIPT = process.env.SLAM_START_SCRIPT || '/home/unitree/go2_nav/SC-FAST-LIO-main/start_slam.sh'
+const NAV_SCRIPT  = process.env.NAV_START_SCRIPT  || '/home/unitree/go2_nav/lite_cog/system/scripts/nav/start_nav.sh'
+const TASK_SCRIPT = process.env.TASK_START_SCRIPT || '/home/unitree/go2_nav/lite_cog/pipeline/src/pipeline_tracking/scripts/Task.py'
+const LIDAR_SCRIPT = process.env.LIDAR_START_SCRIPT || '/home/unitree/go2_nav/lite_cog/system/scripts/lidar/start_lidar.sh'
+const MOTION_SCRIPT = process.env.MOTION_START_SCRIPT || '/home/unitree/go2_nav/go2_SDK_ws/go2_cmd_vel.sh'
 mkdirSync(mapDir, { recursive: true })
 
 // ── PNG generation from PGM (零依赖, 纯 zlib) ──
@@ -656,7 +656,7 @@ app.post('/api/maps/save', requireAuth, async (req, res) => {
     return pcdDest
   }
 
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const gridData = req.body?.data as { width: number; height: number; resolution: number; origin: { x: number; y: number }; data: number[] } | undefined
 
   let pgmPath = ''
@@ -709,7 +709,7 @@ app.get('/api/maps', requireAuth, (_req, res) => {
 
 // 列出所有可选的 PCD 文件
 app.get('/api/maps/pcds', requireAuth, (_req, res) => {
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const pcds = findAllPcds(mapDir).sort((a, b) => b.mtimeMs - a.mtimeMs)
   res.json({
     pcds: pcds.map(p => ({
@@ -734,7 +734,7 @@ app.post('/api/maps/import', requireAuth, upload.single('mapFile'), (req, res) =
     return
   }
   const mapName = originalName.replace(/\.pgm$/i, '')
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   // 为导入地图创建同名文件夹
   const mapFolder = path.join(mapDir, mapName)
   mkdirSync(mapFolder, { recursive: true })
@@ -873,7 +873,7 @@ app.put('/api/maps/:id/rename', requireAuth, (req, res) => {
   const row = db.prepare('SELECT * FROM maps WHERE id = ?').get(req.params.id) as { name: string; yaml_path: string; pcd_path: string } | undefined
   if (!row) { res.status(404).json({ error: 'Map not found' }); return }
   const oldName = row.name
-  const mapDir = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const mapDir = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
 
   // 旧文件夹和新文件夹
   const oldFolder = path.dirname(row.yaml_path) // 例如 /home/.../map/oldName
@@ -945,7 +945,7 @@ app.post('/api/maps/:id/switch', requireAuth, async (req, res) => {
   res.json({ ok: true })
 
   // 切换后从 PGM 重新生成 PNG+PGM，更新 telemetry（等 hook 完成文件拷贝）
-  const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   setTimeout(() => {
     const currentPgm = path.join(MAP_ROOT, 'current.pgm')
     if (existsSync(currentPgm)) {
@@ -1156,7 +1156,7 @@ app.post('/api/motion/stop', requireAuth, async (_req, res) => {
 })
 
 // Topology save: 保存拓扑点位到 Task.py 的 data 目录
-const TASK_DATA_DIR = process.env.TASK_DATA_DIR || '/home/robot/go2_nav/lite_cog/pipeline/src/pipeline_tracking/data'
+const TASK_DATA_DIR = process.env.TASK_DATA_DIR || '/home/unitree/go2_nav/lite_cog/pipeline/src/pipeline_tracking/data'
 
 app.post('/api/topology/save', requireAuth, (req, res) => {
   const { points } = req.body ?? {}
@@ -1213,7 +1213,7 @@ app.post('/api/topology/save', requireAuth, (req, res) => {
 // 启动 Task.py 进程（多点导航顺序执行）
 function startTaskProcess() {
   const gen = navGeneration  // 记录当前 generation
-  taskProcess = spawn('bash', ['-c', `source /opt/ros/noetic/setup.bash && source /home/robot/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee /tmp/task.log`], {
+  taskProcess = spawn('bash', ['-c', `source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/pipeline/devel/setup.bash && python3 ${TASK_SCRIPT} 2>&1 | tee /tmp/task.log`], {
     detached: true,
     stdio: 'ignore',
   })
@@ -1448,7 +1448,7 @@ app.post('/api/map/publish', requireAuth, async (req, res) => {
     writeFileSync(path.join(staticMapsDir, 'live_map.png'), png)
 
     // Write to active/ dir + reload map_server so static_layer picks up edits
-    const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+    const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
     const activeDir = path.join(MAP_ROOT, 'active')
     mkdirSync(activeDir, { recursive: true })
     copyFileSync(path.join(staticMapsDir, 'live_map.pgm'), path.join(activeDir, 'current.pgm'))
@@ -1512,8 +1512,8 @@ app.post('/api/initialpose', requireAuth, async (req, res) => {
 // Nav goal tolerance (runtime dynamic reconfigure)
 app.post('/api/nav/tolerance', requireAuth, async (req, res) => {
   const { xy_tolerance } = req.body ?? {}
-  if (typeof xy_tolerance !== 'number' || xy_tolerance < 0.01 || xy_tolerance > 5) {
-    res.status(400).json({ error: 'xy_tolerance must be 0.01–5 (meters)' })
+  if (typeof xy_tolerance !== 'number' || xy_tolerance < 0.08 || xy_tolerance > 5) {
+    res.status(400).json({ error: 'xy_tolerance must be 0.08–5 (meters)' })
     return
   }
   try {
@@ -1527,6 +1527,59 @@ app.post('/api/nav/tolerance', requireAuth, async (req, res) => {
     console.error('[gateway] Failed to set xy_goal_tolerance:', e.message)
     res.status(500).json({ error: 'Failed to set tolerance: ' + e.message })
   }
+})
+
+const NAV_PARAM_PATHS: Record<string, string[]> = {
+  min_obstacle_height:  ['/move_base/global_costmap/livox_lidar/min_z', '/move_base/local_costmap/livox_lidar/min_z'],
+  max_obstacle_height:  ['/move_base/global_costmap/livox_lidar/max_z', '/move_base/local_costmap/livox_lidar/max_z'],
+  inflation_radius:     ['/move_base/global_costmap/sob_layer/inflation_radius', '/move_base/local_costmap/sob_layer/inflation_radius'],
+  cost_scaling_factor:  ['/move_base/global_costmap/sob_layer/cost_scaling_factor', '/move_base/local_costmap/sob_layer/cost_scaling_factor'],
+  xy_goal_tolerance:    ['/move_base/TebLocalPlannerROS/xy_goal_tolerance'],
+  yaw_goal_tolerance:   ['/move_base/TebLocalPlannerROS/yaw_goal_tolerance'],
+}
+
+function readYamlNumber(file: string, key: string): number | undefined {
+  try {
+    const text = readFileSync(file, 'utf8')
+    const match = text.match(new RegExp(`^\\s*${key}:\\s*([-0-9.]+)`, 'm'))
+    if (!match) return undefined
+    const value = Number(match[1])
+    return Number.isFinite(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readRosNumber(paramPath: string): number | undefined {
+  try {
+    const raw = execSync(
+      `bash -c 'source /opt/ros/noetic/setup.bash && rosparam get ${paramPath}'`,
+      { timeout: 3000 }
+    ).toString().trim()
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+app.get('/api/nav/params', requireAuth, (_req, res) => {
+  const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
+  const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
+  const TEB_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
+  const params: Record<string, number> = {}
+
+  for (const [key, paths] of Object.entries(NAV_PARAM_PATHS)) {
+    const rosValue = readRosNumber(paths[0])
+    if (rosValue !== undefined) {
+      params[key] = rosValue
+      continue
+    }
+    const yamlValue = readYamlNumber(TEB_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML, key)
+    if (yamlValue !== undefined) params[key] = yamlValue
+  }
+
+  res.json({ ok: true, params })
 })
 
 // Obstacle distance (runtime dynamic reconfigure)
@@ -1556,15 +1609,10 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'key and value required' })
     return
   }
-
-  // ── YAML persistence first (fast, reliable, decoupled from ROS) ──
-  const TEB_YAML = '/home/robot/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
-  try {
-    // [-0-9.]* handles negative values like -0.1 (old regex [0-9.]* skipped leading -)
-    execSync(`sed -i "s/^\\(\\\\s*${key}:\\\\s*\\)[-0-9.]*/\\\\1${Number(value)}/" ${TEB_YAML}`, { timeout: 3000 })
-    console.log(`[gateway] yaml updated: ${key}=${value} in ${TEB_YAML}`)
-  } catch { /* YAML update is best-effort */ }
-
+  if (key === 'xy_goal_tolerance' && value < 0.08) {
+    res.status(400).json({ error: 'xy_goal_tolerance must be at least 0.08 (meters)' })
+    return
+  }
   try {
     const cmd = `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set /move_base/TebLocalPlannerROS ${String(key)} ${Number(value)}'`
     execSync(cmd, { timeout: 10000 })
@@ -1579,9 +1627,10 @@ app.post('/api/nav/param/reconfigure', requireAuth, async (req, res) => {
 // Unified nav param — rosparam (needs costmap clear or nav restart)
 // NOTE: inflation_radius / cost_scaling_factor use dynamic_reconfigure for immediate effect.
 //       obstacle_range / min_z / max_z trigger a move_base restart (3-5s interruption).
-const RESTART_MB_SCRIPT = process.env.RESTART_MB_SCRIPT || '/home/robot/go2_nav/lite_cog/system/scripts/nav/restart_move_base.sh'
+const RESTART_MB_SCRIPT = process.env.RESTART_MB_SCRIPT || '/home/unitree/go2_nav/lite_cog/system/scripts/nav/restart_move_base.sh'
 let restartMbTimer: NodeJS.Timeout | null = null
 const RESTART_MB_DEBOUNCE_MS = 2000  // batch rapid slider changes into one restart
+const TEB_PARAM_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
 
 function scheduleRestartMoveBase() {
   if (restartMbTimer) clearTimeout(restartMbTimer)
@@ -1601,21 +1650,16 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'key and value required' })
     return
   }
+  if (key === 'xy_goal_tolerance' && value < 0.08) {
+    res.status(400).json({ error: 'xy_goal_tolerance must be at least 0.08 (meters)' })
+    return
+  }
 
   // All costmap params now use rosparam + YAML + debounced restart
   const DYN_RECONFIG_LAYERS: Record<string, string> = {}
 
   const dynLayer = DYN_RECONFIG_LAYERS[key]
-  const needsRestart = !dynLayer  // STVL params need move_base restart
-
-  // Map frontend key to rosparam paths (global + local costmap)
-  const keyToParams: Record<string, string[]> = {
-    obstacle_range:       ['/move_base/global_costmap/livox_lidar/obstacle_range', '/move_base/local_costmap/livox_lidar/obstacle_range'],
-    min_obstacle_height:  ['/move_base/global_costmap/livox_lidar/min_z', '/move_base/local_costmap/livox_lidar/min_z'],
-    max_obstacle_height:  ['/move_base/global_costmap/livox_lidar/max_z', '/move_base/local_costmap/livox_lidar/max_z'],
-    inflation_radius:     ['/move_base/global_costmap/sob_layer/inflation_radius', '/move_base/local_costmap/sob_layer/inflation_radius'],
-    cost_scaling_factor:  ['/move_base/global_costmap/sob_layer/cost_scaling_factor', '/move_base/local_costmap/sob_layer/cost_scaling_factor'],
-  }
+  const needsRestart = !dynLayer && !TEB_PARAM_KEYS.has(key)  // STVL params need move_base restart
 
   try {
     if (dynLayer) {
@@ -1628,9 +1672,15 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
       const dynCmd = `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set ${servers[0]} ${key} ${Number(value)} & rosrun dynamic_reconfigure dynparam set ${servers[1]} ${key} ${Number(value)} & wait'`
       execSync(dynCmd, { timeout: 10000 })
       console.log(`[gateway] dynparam ${servers[0]} + ${servers[1]} ${key}=${value}`)
+    } else if (TEB_PARAM_KEYS.has(key)) {
+      execSync(
+        `bash -c 'source /opt/ros/noetic/setup.bash && rosrun dynamic_reconfigure dynparam set /move_base/TebLocalPlannerROS ${String(key)} ${Number(value)}'`,
+        { timeout: 10000 }
+      )
+      console.log(`[gateway] reconfigure /move_base/TebLocalPlannerROS ${key}=${value}`)
     } else {
       // ── rosparam set for STVL observation-source params ──
-      const paths = keyToParams[key] || [key]
+      const paths = NAV_PARAM_PATHS[key] || [key]
       if (paths.length >= 2) {
         execSync(`bash -c 'source /opt/ros/noetic/setup.bash && rosparam set ${paths[0]} ${Number(value)} & rosparam set ${paths[1]} ${Number(value)} & wait'`, { timeout: 5000 })
       } else {
@@ -1640,10 +1690,9 @@ app.post('/api/nav/param/rosparam', requireAuth, async (req, res) => {
     }
 
     // ── Also persist to YAML config file so values survive nav restart ──
-    const TEB_KEYS = new Set(['xy_goal_tolerance', 'yaw_goal_tolerance'])
-    const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/robot/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
-    const TEB_YAML = '/home/robot/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
-    const YAML_FILE = TEB_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML
+    const COSTMAP_YAML = process.env.COSTMAP_YAML || '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/common_costmap_params.yaml'
+    const TEB_YAML = '/home/unitree/go2_nav/lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml'
+    const YAML_FILE = TEB_PARAM_KEYS.has(key) ? TEB_YAML : COSTMAP_YAML
     // Use frontend key directly as YAML key (frontend keys match YAML keys).
     // Do NOT derive from rosparam path suffix — e.g. min_obstacle_height maps to
     // rosparam .../min_z but YAML uses min_obstacle_height (different from min_z).
@@ -1734,9 +1783,6 @@ setInterval(() => {
     { key: 'voxelGrid',    val: runtimeState.voxelGrid },
     { key: 'navStatus',    val: runtimeState.navStatus },
     { key: 'navMode',      val: runtimeState.navMode },
-    { key: 'controlSource', val: runtimeState.controlSource },
-    { key: 'battery',      val: runtimeState.battery },
-    { key: 'bodyState',    val: runtimeState.bodyState },
     { key: 'hdlRunning',   val: runtimeState.hdlRunning },
     { key: 'lastTfAt',     val: runtimeState.lastTfAt },
     { key: 'lastVoxelAt',  val: runtimeState.lastVoxelAt },
@@ -1781,7 +1827,7 @@ setInterval(() => {
 async function bootstrap() {
   mkdirSync(path.resolve(process.cwd(), 'config'), { recursive: true })
   // Generate live map BEFORE starting server — avoids frontend seeing stale data
-  const MAP_ROOT = process.env.MAP_DIR || '/home/robot/go2_nav/lite_cog/system/map'
+  const MAP_ROOT = process.env.MAP_DIR || '/home/unitree/go2_nav/lite_cog/system/map'
   const currentPgm = path.join(MAP_ROOT, 'current.pgm')
   if (existsSync(currentPgm)) {
     regenerateMapPng(currentPgm)

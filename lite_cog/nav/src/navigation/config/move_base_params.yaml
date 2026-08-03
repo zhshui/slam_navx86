@@ -11,7 +11,7 @@ controller_patience: 3.0
 max_planning_retries: -1
 oscillation_timeout: 0.0
 oscillation_distance: 0.1
-make_plan_clear_costmap: true
+make_plan_clear_costmap: false
 make_plan_add_unreachable_goal: false
 clearing_radius: 0.8
 shutdown_costmaps: false
@@ -37,4 +37,3 @@ reset_global_costmap:
   force_updating: true
   affected_maps: "global"
   layer_names: ["stvl_obstacle_layer"]
-

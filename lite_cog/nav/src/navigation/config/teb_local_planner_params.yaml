@@ -4,7 +4,7 @@ TebLocalPlannerROS:
     type: polygon
     vertices: [[-0.20, -0.15], [-0.20, 0.15], [0.20, 0.15], [0.20, -0.15]]
 
-  odom_topic: leg_odom
+  odom_topic: odom
   map_frame: /map
 
   # Trajectory
@@ -13,10 +13,10 @@ TebLocalPlannerROS:
   dt_hysteresis: 0.1
   min_samples: 3
   max_samples: 100
-  global_plan_overwrite_orientation: false
+  global_plan_overwrite_orientation: false # 关掉=让TEB自己优化朝向，靠nh约束自然对齐
   allow_init_with_backwards_motion: false
-  global_plan_viapoint_sep: 0.3
-  via_points_ordered: true
+  global_plan_viapoint_sep: 0.15  # 默认0.3，减半=途经点更密，朝向跟随更精细
+  via_points_ordered: false
   max_global_plan_lookahead_dist: 5.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
@@ -31,7 +31,7 @@ TebLocalPlannerROS:
 
   # Robot
   max_vel_x: 1.0
-  max_vel_x_backwards: 0.2
+  max_vel_x_backwards: 0.0  #禁止倒退
   max_vel_y: 0.1
   max_vel_trans: 1.0
   max_vel_theta: 1.5
@@ -52,8 +52,8 @@ TebLocalPlannerROS:
   trans_stopped_vel: 0.05
   theta_stopped_vel: 0.05
   complete_global_plan: false
-  arrival_debounce_cycles: 10 # 到达防抖：连续10个周期(10Hz下=1秒)满足到达条件才判定到达，防止定位噪声误触发
-  arrival_hold_cycles: 15     # 到达保持：防抖通过后继续主动控制15个周期(1.5秒)，确保机器人稳定停在目标点
+  arrival_debounce_cycles: 5  # 到达防抖：连续5个周期满足位置和yaw容差
+  arrival_hold_cycles: 0      # PID已同时保持位置和yaw，不再增加额外等待
 
   # Obstacles
   min_obstacle_dist: 0.15
@@ -89,9 +89,9 @@ TebLocalPlannerROS:
   # weight_max_vel_theta: 1
   # weight_acc_lim_x: 1
   # weight_acc_lim_y: 1
-  # weight_acc_lim_theta: 1
-  weight_kinematics_nh: 100   #default 1000
-  weight_kinematics_forward_drive: 30 #default 1
+  weight_acc_lim_theta: 10
+  weight_kinematics_nh: 1000  #default 1000（增大=更强的非完整约束，确保车身朝向与运动方向一致）
+  weight_kinematics_forward_drive: 100  #禁止倒退（越大越排斥，走不了就转圈）
   weight_kinematics_turning_radius: 0 #default 1
   weight_optimaltime: 1
   weight_shortest_path: 9  #default 0
@@ -100,7 +100,7 @@ TebLocalPlannerROS:
   # weight_dynamic_obstacle: 50
   # weight_dynamic_obstacle_inflation: 0.1
   # weight_velocity_obstacle_ratio: 0
-  weight_viapoint: 1        #default 1
+  weight_viapoint: 10        #default 1（增大=更紧密跟随全局路径，包括朝向）
   weight_prefer_rotdir: 50   #default 50
   # weight_adapt_factor: 2
   # obstacle_cost_exponent: 1

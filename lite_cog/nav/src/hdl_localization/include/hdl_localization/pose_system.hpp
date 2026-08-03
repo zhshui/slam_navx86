@@ -17,9 +17,7 @@ public:
   typedef Eigen::Matrix<T, Eigen::Dynamic, 1> VectorXt;
   typedef Eigen::Quaternion<T> Quaterniont;
 public:
-  PoseSystem() {
-    dt = 0.01;
-  }
+  PoseSystem(bool use_acceleration = true) : dt(0.01), use_acceleration(use_acceleration) {}
 
   // system equation (without input)
   VectorXt f(const VectorXt& state) const {
@@ -68,11 +66,14 @@ public:
     next_state.middleRows(0, 3) = pt + vt * dt;  //
 
     // velocity
-    Vector3t g(0.0f, 0.0f, 9.80665f);
-    Vector3t acc_ = raw_acc - acc_bias;
-    Vector3t acc = qt * acc_;
-    next_state.middleRows(3, 3) = vt + (acc - g) * dt;
-    // next_state.middleRows(3, 3) = vt; // + (acc - g) * dt;		// acceleration didn't contribute to accuracy due to large noise
+    if (use_acceleration) {
+      Vector3t g(0.0f, 0.0f, 9.80665f);
+      Vector3t acc_ = raw_acc - acc_bias;
+      Vector3t acc = qt * acc_;
+      next_state.middleRows(3, 3) = vt + (acc - g) * dt;
+    } else {
+      next_state.middleRows(3, 3) = vt;
+    }
 
     // orientation
     Vector3t gyro = raw_gyro - gyro_bias;
@@ -97,6 +98,7 @@ public:
   }
 
   double dt;
+  bool use_acceleration;
 };
 
 }

@@ -624,6 +624,12 @@ public:
    * @brief Calculate the length (accumulated euclidean distance) of the trajectory
    */
   double getAccumulatedDistance() const;
+
+  /**
+   * @brief Check whether a warm-start trajectory jumps away from its start.
+   * @param max_gap Maximum allowed distance between the first two poses.
+   */
+  bool hasLargeInitialGap(double max_gap) const;
   
   /**
    * @brief Check if all trajectory points are contained in a specific region

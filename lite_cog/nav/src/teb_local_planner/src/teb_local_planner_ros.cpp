@@ -37,6 +37,8 @@
  *********************************************************************/
 
 #include <teb_local_planner/teb_local_planner_ros.h>
+#include <teb_local_planner/path_heading.h>
+#include <teb_local_planner/terminal_pid.h>
 
 #include <tf2_eigen/tf2_eigen.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -70,7 +72,12 @@ TebLocalPlannerROS::TebLocalPlannerROS() : costmap_ros_(NULL), tf_(NULL), costma
                                            costmap_converter_loader_("costmap_converter", "costmap_converter::BaseCostmapToPolygons"),
                                            dynamic_recfg_(NULL), custom_via_points_active_(false), goal_reached_(false), no_infeasible_plans_(0),
                                            arrival_consistent_count_(0), arrival_hold_count_(0),
-                                           last_preferred_rotdir_(RotType::none), user_goal_received_(false), initialized_(false)
+                                           last_preferred_rotdir_(RotType::none), user_goal_received_(false),
+                                           initial_path_alignment_pending_(false),
+                                           path_heading_initialized_(false), smoothed_path_heading_(0.0),
+                                           cruise_yaw_direction_(0),
+                                           terminal_convergence_active_(false),
+                                           initialized_(false)
 {
   std::cout << "Customized teb_local_planner launched!" << std::endl;
 }
@@ -189,6 +196,9 @@ void TebLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
     nh.param("user_goal_topic", user_goal_topic, std::string("/move_base/current_goal"));
     ros::NodeHandle root_nh;
     user_goal_sub_ = root_nh.subscribe(user_goal_topic, 1, &TebLocalPlannerROS::userGoalCB, this);
+    navigation_state_pub_ =
+        nh.advertise<std_msgs::String>("navigation_state", 1, true);
+    publishNavigationState("IDLE");
     
     // initialize failure detector
     ros::NodeHandle nh_move_base("~");
@@ -211,6 +221,8 @@ void TebLocalPlannerROS::initialize(std::string name, tf2_ros::Buffer* tf, costm
 
 bool TebLocalPlannerROS::setPlan(const std::vector<geometry_msgs::PoseStamped>& orig_global_plan)
 {
+  boost::mutex::scoped_lock goal_lock(goal_state_mutex_);
+
   // check if plugin is initialized
   if(!initialized_)
   {
@@ -249,6 +261,8 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
                                                      geometry_msgs::TwistStamped &cmd_vel,
                                                      std::string &message)
 {
+  boost::mutex::scoped_lock goal_lock(goal_state_mutex_);
+
   // check if plugin initialized
   if(!initialized_)
   {
@@ -304,31 +318,55 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
   double dx = global_goal.pose.position.x - robot_pose_.x();
   double dy = global_goal.pose.position.y - robot_pose_.y();
 
-  // Use user's original goal yaw if available (preserves user-specified orientation,
-  // unlike global_plan_.back() which may have its orientation overwritten by
-  // the global planner's orientation_mode=1 Forward)
-  double goal_yaw;
+  // Keep the user's final yaw for the arrival/alignment stage, but do not feed
+  // it into the local optimizer until xy has been reached.
+  double final_goal_yaw;
   if (user_goal_received_)
   {
     geometry_msgs::PoseStamped user_goal_transformed;
     tf2::doTransform(user_goal_pose_, user_goal_transformed, tf_plan_to_global);
-    goal_yaw = tf2::getYaw(user_goal_transformed.pose.orientation);
+    final_goal_yaw = tf2::getYaw(user_goal_transformed.pose.orientation);
   }
   else
   {
-    goal_yaw = tf2::getYaw(global_goal.pose.orientation);
+    final_goal_yaw = tf2::getYaw(global_goal.pose.orientation);
   }
-  double delta_orient = g2o::normalize_theta(goal_yaw - robot_pose_.theta());
-  static bool v4_loaded = false;
-  if (!v4_loaded) { ROS_ERROR("TEB v4 LOADED - yaw takeover active"); v4_loaded = true; }
 
-  ROS_INFO("TEB goal check: user_goal=%d, goal_yaw=%.1fdeg, robot_yaw=%.1fdeg, delta=%.1fdeg, dist=%.3f",
-      user_goal_received_, goal_yaw*180/M_PI, robot_pose_.theta()*180/M_PI, delta_orient*180/M_PI, sqrt(dx*dx+dy*dy));
+  double dist_to_global_goal_xy = std::sqrt(dx*dx+dy*dy);
+  bool public_xy_reached = (dist_to_global_goal_xy <= cfg_.goal_tolerance.xy_goal_tolerance);
+  double delta_orient = g2o::normalize_theta(final_goal_yaw - robot_pose_.theta());
+  const bool terminal_was_active = terminal_convergence_active_;
+  terminal_convergence_active_ = updateTerminalConvergence(
+      terminal_convergence_active_, dist_to_global_goal_xy,
+      kTerminalPidEnterDistance, kTerminalPidExitDistance);
+  if (terminal_convergence_active_ != terminal_was_active)
+  {
+    terminal_pid_.reset();
+    terminal_pid_last_time_ = ros::Time();
+    ROS_INFO("TEB terminal PID %s at %.3fm",
+             terminal_convergence_active_ ? "entered" : "exited",
+             dist_to_global_goal_xy);
+  }
+  if (terminal_convergence_active_)
+    initial_path_alignment_pending_ = false;
+  static bool terminal_pid_loaded = false;
+  if (!terminal_pid_loaded)
+  {
+    ROS_WARN("TEB terminal PID loaded - joint XY/yaw convergence active");
+    terminal_pid_loaded = true;
+  }
+
+  ROS_INFO_THROTTLE(1.0, "TEB goal check: user_goal=%d, final_yaw=%.1fdeg, robot_yaw=%.1fdeg, delta=%.1fdeg, dist=%.3f, xy_reached=%d, terminal_pid=%d",
+      user_goal_received_, final_goal_yaw*180/M_PI, robot_pose_.theta()*180/M_PI,
+      delta_orient*180/M_PI, dist_to_global_goal_xy, public_xy_reached,
+      terminal_convergence_active_);
+
+  bool plan_goal_ready = (!cfg_.goal_tolerance.complete_global_plan || via_points_.size() == 0);
 
   // Check if all goal conditions are met (single-frame check)
-  bool at_goal = (fabs(std::sqrt(dx*dx+dy*dy)) < cfg_.goal_tolerance.xy_goal_tolerance
+  bool at_goal = (dist_to_global_goal_xy < cfg_.goal_tolerance.xy_goal_tolerance
     && fabs(delta_orient) < cfg_.goal_tolerance.yaw_goal_tolerance
-    && (!cfg_.goal_tolerance.complete_global_plan || via_points_.size() == 0)
+    && plan_goal_ready
     && (base_local_planner::stopped(base_odom, cfg_.goal_tolerance.theta_stopped_vel, cfg_.goal_tolerance.trans_stopped_vel)
         || cfg_.goal_tolerance.free_goal_vel));
 
@@ -357,6 +395,7 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
         ROS_INFO("TEB goal reached! (debounced %d cycles, held %d cycles)",
                  arrival_consistent_count_, arrival_hold_count_);
         goal_reached_ = true;
+        publishNavigationState("SUCCEEDED");
         return mbf_msgs::ExePathResult::SUCCESS;
       }
     }
@@ -394,29 +433,46 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
   // Get current goal point (last point of the transformed plan)
   robot_goal_.x() = transformed_plan.back().pose.position.x;
   robot_goal_.y() = transformed_plan.back().pose.position.y;
-  // Use user's original goal yaw if available, otherwise fall back to plan's orientation
-  if (user_goal_received_)
+  auto setPlanGoalYaw = [&](double yaw)
   {
-    geometry_msgs::PoseStamped user_goal_transformed;
-    tf2::doTransform(user_goal_pose_, user_goal_transformed, tf_plan_to_global);
-    robot_goal_.theta() = tf2::getYaw(user_goal_transformed.pose.orientation);
-    // overwrite/update goal orientation of the transformed plan with the actual goal
+    robot_goal_.theta() = yaw;
     tf2::Quaternion q;
-    q.setRPY(0, 0, robot_goal_.theta());
+    q.setRPY(0, 0, yaw);
     tf2::convert(q, transformed_plan.back().pose.orientation);
-  }
-  else if (cfg_.trajectory.global_plan_overwrite_orientation)
+  };
+
+  if (terminal_convergence_active_)
   {
-    robot_goal_.theta() = estimateLocalGoalOrientation(global_plan_, transformed_plan.back(), goal_idx, tf_plan_to_global);
-    // overwrite/update goal orientation of the transformed plan with the actual goal (enable using the plan as initialization)
-    tf2::Quaternion q;
-    q.setRPY(0, 0, robot_goal_.theta());
-    tf2::convert(q, transformed_plan.back().pose.orientation);
+    setPlanGoalYaw(final_goal_yaw);
   }
   else
   {
-    robot_goal_.theta() = tf2::getYaw(transformed_plan.back().pose.orientation);
+    const double raw_path_heading = estimatePathHeading(
+        transformed_plan, 4.0,
+        robot_goal_.x(), robot_goal_.y(),
+        robot_pose_.x(), robot_pose_.y(), robot_pose_.theta());
+    if (!path_heading_initialized_)
+    {
+      smoothed_path_heading_ = raw_path_heading;
+      path_heading_initialized_ = true;
+    }
+    else
+    {
+      const double heading_filter_factor = 0.20;
+      const double heading_delta =
+          g2o::normalize_theta(raw_path_heading - smoothed_path_heading_);
+      smoothed_path_heading_ = g2o::normalize_theta(
+          smoothed_path_heading_ + heading_filter_factor * heading_delta);
+    }
+    setPlanGoalYaw(smoothed_path_heading_);
+    ROS_INFO_THROTTLE(
+        1.0,
+        "TEB path heading: raw=%.1fdeg filtered=%.1fdeg",
+        raw_path_heading*180/M_PI, smoothed_path_heading_*180/M_PI);
   }
+
+  ROS_INFO_THROTTLE(1.0, "TEB local goal yaw: %.1fdeg (%s)",
+      robot_goal_.theta()*180/M_PI, terminal_convergence_active_ ? "terminal-pid" : "path-yaw");
 
   // overwrite/update start of the transformed plan with the actual robot position (allows using the plan as initial trajectory)
   if (transformed_plan.size()==1) // plan only contains the goal
@@ -424,6 +480,89 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
     transformed_plan.insert(transformed_plan.begin(), geometry_msgs::PoseStamped()); // insert start (not yet initialized)
   }
   transformed_plan.front() = robot_pose; // update start
+
+  if (terminal_convergence_active_)
+  {
+    publishNavigationState("GOAL_ALIGNING");
+    cruise_yaw_direction_ = 0;
+    const ros::Time now = ros::Time::now();
+    double dt = 0.1;
+    if (!terminal_pid_last_time_.isZero())
+      dt = (now - terminal_pid_last_time_).toSec();
+    terminal_pid_last_time_ = now;
+
+    cmd_vel.twist = terminal_pid_.calculate(
+        dx, dy, delta_orient, robot_pose_.theta(), dt,
+        cfg_.goal_tolerance.xy_goal_tolerance,
+        cfg_.goal_tolerance.yaw_goal_tolerance);
+    const double terminal_max_vel_x_backwards = std::max(
+        cfg_.robot.max_vel_x_backwards,
+        std::min(0.20, cfg_.robot.max_vel_x));
+    saturateVelocity(
+        cmd_vel.twist.linear.x, cmd_vel.twist.linear.y,
+        cmd_vel.twist.angular.z,
+        cfg_.robot.max_vel_x, cfg_.robot.max_vel_y,
+        cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
+        terminal_max_vel_x_backwards);
+
+    if (cfg_.robot.is_footprint_dynamic)
+    {
+      footprint_spec_ = costmap_ros_->getRobotFootprint();
+      costmap_2d::calculateMinAndMaxDistances(
+          footprint_spec_, robot_inscribed_radius_,
+          robot_circumscribed_radius);
+    }
+
+    const double projection_time = 0.5;
+    const double cos_yaw = std::cos(robot_pose_.theta());
+    const double sin_yaw = std::sin(robot_pose_.theta());
+    const double velocity_global_x =
+        cos_yaw * cmd_vel.twist.linear.x -
+        sin_yaw * cmd_vel.twist.linear.y;
+    const double velocity_global_y =
+        sin_yaw * cmd_vel.twist.linear.x +
+        cos_yaw * cmd_vel.twist.linear.y;
+    const double projected_x =
+        robot_pose_.x() + velocity_global_x * projection_time;
+    const double projected_y =
+        robot_pose_.y() + velocity_global_y * projection_time;
+    const double projected_yaw = g2o::normalize_theta(
+        robot_pose_.theta() +
+        cmd_vel.twist.angular.z * projection_time);
+
+    const double current_footprint_cost = costmap_model_->footprintCost(
+        robot_pose_.x(), robot_pose_.y(), robot_pose_.theta(),
+        footprint_spec_, robot_inscribed_radius_,
+        robot_circumscribed_radius);
+    const double projected_footprint_cost = costmap_model_->footprintCost(
+        projected_x, projected_y, projected_yaw,
+        footprint_spec_, robot_inscribed_radius_,
+        robot_circumscribed_radius);
+    if (current_footprint_cost < 0.0 || projected_footprint_cost < 0.0)
+    {
+      cmd_vel.twist.linear.x = 0.0;
+      cmd_vel.twist.linear.y = 0.0;
+      cmd_vel.twist.angular.z = 0.0;
+      last_cmd_ = cmd_vel.twist;
+      message = "terminal PID motion is not footprint-feasible";
+      ROS_WARN_THROTTLE(
+          1.0,
+          "TEB terminal PID stopped by footprint check: current=%.1f projected=%.1f",
+          current_footprint_cost, projected_footprint_cost);
+      return mbf_msgs::ExePathResult::NO_VALID_CMD;
+    }
+
+    ROS_INFO_THROTTLE(
+        0.5,
+        "TEB terminal PID: dist=%.3f yaw_error=%.1fdeg cmd=(%.3f, %.3f, %.3f)",
+        dist_to_global_goal_xy, delta_orient*180/M_PI,
+        cmd_vel.twist.linear.x, cmd_vel.twist.linear.y,
+        cmd_vel.twist.angular.z);
+    no_infeasible_plans_ = 0;
+    last_cmd_ = cmd_vel.twist;
+    visualization_->publishGlobalPlan(global_plan_);
+    return mbf_msgs::ExePathResult::SUCCESS;
+  }
     
   // clear currently existing obstacles
   obstacles_.clear();
@@ -512,96 +651,96 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
                    cfg_.robot.max_vel_x, cfg_.robot.max_vel_y, cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
                    cfg_.robot.max_vel_x_backwards);
 
-  // Yaw tracking near goal: TEB's trajectory may be too short near the goal
-  // to produce sufficient yaw correction, and TEB may command rotation that
-  // fights the desired goal orientation (e.g. due to forward_drive constraint).
-  //
-  // Strategy: when robot is near the goal xy but yaw is off, REPLACE TEB's
-  // angular velocity entirely with a strong P-controller.  This is a takeover,
-  // not an overlay — do NOT add to TEB's angular.z, because TEB may command
-  // rotation in the wrong direction.
-  //
-  // Once yaw error drops within tolerance, the takeover releases, TEB's
-  // angular velocity should be near-zero at the goal, so stopped() can pass
-  // and the debounce counter can start.
   double dist_to_goal_xy = std::sqrt(dx*dx+dy*dy);
-  bool near_goal_xy = (dist_to_goal_xy < cfg_.goal_tolerance.xy_goal_tolerance * 1.5);
-  bool yaw_off = (fabs(delta_orient) > cfg_.goal_tolerance.yaw_goal_tolerance);
-
-  // Common: position error for P-controllers below
+  double inner_xy_goal = std::max(0.03, cfg_.goal_tolerance.xy_goal_tolerance - 0.02);
+  double finish_xy_window = std::max(0.60, cfg_.goal_tolerance.xy_goal_tolerance * 2.5);
+  double approach_deadband = inner_xy_goal;
   double dx_goal = robot_goal_.x() - robot_pose_.x();
   double dy_goal = robot_goal_.y() - robot_pose_.y();
-
-  if (near_goal_xy && yaw_off)
+  const double path_heading_error =
+      g2o::normalize_theta(robot_goal_.theta() - robot_pose_.theta());
+  const double initial_path_alignment_tolerance = 0.17453292519943295;  // 10 deg
+  if (public_xy_reached)
   {
-    // v3 takeover marker - remove after verifying
-    ROS_ERROR_THROTTLE(1.0, "TEB v3 APPROACH takeover: delta=%.1fdeg dist=%.3f",
-        delta_orient*180/M_PI, dist_to_goal_xy);
-    // --- APPROACH phase: yaw takeover ---
-    // Replace TEB's angular velocity with a strong P-controller.
-    // Keep TEB's linear velocity for position tracking until we get close.
-    double k_p_yaw = 2.5;
-    double yaw_correction = k_p_yaw * delta_orient;
-    double yaw_max = cfg_.robot.max_vel_theta * 0.5;
-    yaw_correction = std::max(-yaw_max, std::min(yaw_max, yaw_correction));
-    cmd_vel.twist.angular.z = yaw_correction;  // REPLACE
-
-    // When very close to goal xy, also take over linear with P-controller
-    // to prevent TEB from driving the robot away
-    if (dist_to_goal_xy < cfg_.goal_tolerance.xy_goal_tolerance)
-    {
-      double k_p_xy = 1.2;
-      cmd_vel.twist.linear.x = k_p_xy * dx_goal;  // REPLACE
-      cmd_vel.twist.linear.y = k_p_xy * dy_goal;
-      saturateVelocity(cmd_vel.twist.linear.x, cmd_vel.twist.linear.y, cmd_vel.twist.angular.z,
-                       cfg_.robot.max_vel_x, cfg_.robot.max_vel_y, cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
-                       cfg_.robot.max_vel_x_backwards);
-    }
+    initial_path_alignment_pending_ = false;
+    initial_alignment_pid_.reset();
+    initial_alignment_pid_last_time_ = ros::Time();
   }
-  else if (!yaw_off && dist_to_goal_xy < cfg_.goal_tolerance.xy_goal_tolerance * 2.0)
+  else if (initial_path_alignment_pending_ &&
+           std::fabs(path_heading_error) <= initial_path_alignment_tolerance)
   {
-    // v3 aligned marker - remove after verifying
-    ROS_ERROR_THROTTLE(1.0, "TEB v3 YAW_ALIGNED freeze: delta=%.1fdeg dist=%.3f",
-        delta_orient*180/M_PI, dist_to_goal_xy);
-    // --- YAW ALIGNED: full takeover from TEB ---
-    // Yaw is within tolerance and robot is near the goal.
-    // TEB may command linear/angular velocity that takes the robot away
-    // from the goal, so REPLACE both linear and angular with P-controllers.
-    // angular = 0 (no rotation needed), linear = P to hold position.
-    cmd_vel.twist.angular.z = 0.0;
-
-    double k_p_xy = 1.2;
-    cmd_vel.twist.linear.x = k_p_xy * dx_goal;  // REPLACE
-    cmd_vel.twist.linear.y = k_p_xy * dy_goal;
-
-    saturateVelocity(cmd_vel.twist.linear.x, cmd_vel.twist.linear.y, cmd_vel.twist.angular.z,
-                     cfg_.robot.max_vel_x, cfg_.robot.max_vel_y, cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
-                     cfg_.robot.max_vel_x_backwards);
+    initial_path_alignment_pending_ = false;
+    initial_alignment_pid_.reset();
+    initial_alignment_pid_last_time_ = ros::Time();
+    ROS_INFO("TEB initial path alignment complete: error=%.1fdeg",
+             path_heading_error*180/M_PI);
   }
-  else if (arrival_hold_count_ > 0)
+  const bool initial_path_alignment_active =
+      initial_path_alignment_pending_ && !public_xy_reached;
+
+  if (initial_path_alignment_active)
   {
-    // --- HOLD phase: gentle position/rotation maintenance ---
-    // Debounce has passed — actively maintain position and orientation.
-    if (yaw_off)
-    {
-      double k_p_yaw = 0.8;
-      double yaw_correction = k_p_yaw * delta_orient;
-      double yaw_max = cfg_.robot.max_vel_theta * 0.3;
-      yaw_correction = std::max(-yaw_max, std::min(yaw_max, yaw_correction));
-      cmd_vel.twist.angular.z = yaw_correction;  // REPLACE
-    }
-    else
+    publishNavigationState("PATH_ALIGNING");
+    const ros::Time now = ros::Time::now();
+    double alignment_dt = 0.1;
+    if (!initial_alignment_pid_last_time_.isZero())
+      alignment_dt = (now - initial_alignment_pid_last_time_).toSec();
+    initial_alignment_pid_last_time_ = now;
+    const geometry_msgs::Twist alignment_cmd =
+        initial_alignment_pid_.calculate(
+            0.0, 0.0, path_heading_error, robot_pose_.theta(),
+            alignment_dt, 0.0, initial_path_alignment_tolerance);
+    ROS_WARN_THROTTLE(
+        1.0,
+        "TEB initial path PID ALIGN(shortest arc): error=%.1fdeg path_yaw=%.1fdeg robot_yaw=%.1fdeg cmd_w=%.2f",
+        path_heading_error*180/M_PI, robot_goal_.theta()*180/M_PI,
+        robot_pose_.theta()*180/M_PI, alignment_cmd.angular.z);
+    cmd_vel.twist = alignment_cmd;
+  }
+  else if (dist_to_goal_xy <= finish_xy_window)
+  {
+    publishNavigationState("ACTIVE");
+    cruise_yaw_direction_ = 0;
+    const double target_position_yaw = std::atan2(dy_goal, dx_goal);
+    const geometry_msgs::Twist approach_cmd = calculatePathAlignedApproach(
+        dx_goal, dy_goal, robot_pose_.theta(), target_position_yaw, approach_deadband);
+    ROS_ERROR_THROTTLE(
+        1.0,
+        "TEB target-aligned XY APPROACH: dist=%.3f target_yaw=%.1fdeg robot_yaw=%.1fdeg cmd=(%.2f,%.2f,%.2f)",
+        dist_to_goal_xy, target_position_yaw*180/M_PI, robot_pose_.theta()*180/M_PI,
+        approach_cmd.linear.x, approach_cmd.linear.y, approach_cmd.angular.z);
+    cmd_vel.twist = approach_cmd;
+  }
+  else if (cmd_vel.twist.linear.x > 0.20)
+  {
+    publishNavigationState("ACTIVE");
+    const double yaw_deadband = 0.08;
+    const double yaw_reversal_threshold = 0.18;
+    const double requested_yaw = cmd_vel.twist.angular.z;
+    const int requested_direction =
+        requested_yaw > 0.0 ? 1 : (requested_yaw < 0.0 ? -1 : 0);
+
+    if (std::fabs(requested_yaw) < yaw_deadband ||
+        (requested_direction != 0 &&
+         cruise_yaw_direction_ != 0 &&
+         requested_direction != cruise_yaw_direction_ &&
+         std::fabs(requested_yaw) < yaw_reversal_threshold))
     {
       cmd_vel.twist.angular.z = 0.0;
+      ROS_INFO_THROTTLE(
+          1.0,
+          "TEB cruise yaw suppression: requested=%.3f direction=%d held=%d",
+          requested_yaw, requested_direction, cruise_yaw_direction_);
     }
-
-    double k_p_xy = 0.8;
-    cmd_vel.twist.linear.x = k_p_xy * dx_goal;  // REPLACE
-    cmd_vel.twist.linear.y = k_p_xy * dy_goal;
-
-    saturateVelocity(cmd_vel.twist.linear.x, cmd_vel.twist.linear.y, cmd_vel.twist.angular.z,
-                     cfg_.robot.max_vel_x, cfg_.robot.max_vel_y, cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
-                     cfg_.robot.max_vel_x_backwards);
+    else if (requested_direction != 0)
+    {
+      cruise_yaw_direction_ = requested_direction;
+    }
+  }
+  else
+  {
+    publishNavigationState("ACTIVE");
+    cruise_yaw_direction_ = 0;
   }
 
   // convert rot-vel to steering angle if desired (carlike robot).
@@ -1222,14 +1361,38 @@ void TebLocalPlannerROS::customViaPointsCB(const nav_msgs::Path::ConstPtr& via_p
 
 void TebLocalPlannerROS::userGoalCB(const geometry_msgs::PoseStamped::ConstPtr& goal_msg)
 {
+  boost::mutex::scoped_lock goal_lock(goal_state_mutex_);
+
   // Store the user's original goal pose (preserves user-specified yaw,
   // unlike global_plan_.back() which may have its orientation overwritten
   // by the global planner's orientation_mode=1 (Forward))
   user_goal_pose_ = *goal_msg;
   user_goal_received_ = true;
+  initial_path_alignment_pending_ = true;
+  initial_alignment_pid_.reset();
+  initial_alignment_pid_last_time_ = ros::Time();
+  path_heading_initialized_ = false;
+  smoothed_path_heading_ = 0.0;
+  cruise_yaw_direction_ = 0;
+  terminal_convergence_active_ = false;
+  terminal_pid_.reset();
+  terminal_pid_last_time_ = ros::Time();
+  publishNavigationState("PATH_ALIGNING");
   ROS_INFO("TEB: received user goal (%.2f, %.2f, yaw=%.2f)",
       goal_msg->pose.position.x, goal_msg->pose.position.y,
       tf2::getYaw(goal_msg->pose.orientation));
+}
+
+void TebLocalPlannerROS::publishNavigationState(const std::string& state)
+{
+  if (state == navigation_state_)
+    return;
+
+  std_msgs::String message;
+  message.data = state;
+  navigation_state_pub_.publish(message);
+  navigation_state_ = state;
+  ROS_INFO("TEB navigation state: %s", state.c_str());
 }
  
 RobotFootprintModelPtr TebLocalPlannerROS::getRobotFootprintFromParamServer(const ros::NodeHandle& nh, const TebConfig& config)
@@ -1406,5 +1569,3 @@ double TebLocalPlannerROS::getNumberFromXMLRPC(XmlRpc::XmlRpcValue& value, const
 }
 
 } // end namespace teb_local_planner
-
-

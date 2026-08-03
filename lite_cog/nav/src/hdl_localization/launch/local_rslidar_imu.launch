@@ -2,7 +2,8 @@
 <launch>
   <!-- arguments -->
   <arg name="nodelet_manager" default="velodyne_nodelet_manager" />
-  <arg name="points_topic" default="/livox/lidar" />
+  <arg name="raw_points_topic" default="/livox/lidar" />
+  <arg name="points_topic" default="/livox/lidar_filtered" />
   <arg name="map_name" default="current" />
   <!-- input clouds are transformed in odom_child_frame, and then localization is performed in that frame -->
   <!-- this is useful to match the LIDAR and IMU coodinate systems -->
@@ -10,6 +11,7 @@
 
   <!-- optional arguments -->
   <arg name="use_imu" default="true" />
+  <arg name="use_imu_acceleration" default="false" />
   <arg name="invert_imu_acc" default="false" />
   <arg name="invert_imu_gyro" default="false" />
   <arg name="use_global_localization" default="false" />
@@ -24,14 +26,14 @@
   <arg name="robot_odom_frame_id" value="odom" />
   <arg name="plot_estimation_errors" value="false" />
 
-  <node name="MapServer" pkg="map_server" type="map_server" args="/home/robot/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
+  <node name="MapServer" pkg="map_server" type="map_server" args="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
 
   <!-- in case you use velodyne_driver, comment out the following line -->
   <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
 
     <!-- globalmap_server_nodelet -->
     <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-      <param name="globalmap_pcd" value="/home/robot/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
+      <param name="globalmap_pcd" value="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
       <param name="convert_utm_to_local" value="true" />
       <param name="downsample_resolution" value="0.1" />
     </node>
@@ -46,6 +48,7 @@
       <!-- imu settings -->
       <!-- during "cool_time", imu inputs are ignored -->
       <param name="use_imu" value="$(arg use_imu)" />
+      <param name="use_imu_acceleration" value="$(arg use_imu_acceleration)" />
       <param name="imu_timeout_ms" value="9999" />
       <param name="invert_acc" value="$(arg invert_imu_acc)" />
       <param name="invert_gyro" value="$(arg invert_imu_gyro)" />
@@ -58,14 +61,13 @@
       <param name="reg_method" value="NDT_OMP" />
       <!-- if NDT is slow for your PC, try DIRECT1 serach method, which is a bit unstable but extremely fast -->
       <param name="ndt_neighbor_search_method" value="DIRECT7" />
-      <param name="ndt_neighbor_search_radius" value="3.0" />
+      <param name="ndt_neighbor_search_radius" value="5.0" />
       <param name="ndt_resolution" value="0.5" />
-      <param name="downsample_resolution" value="0.1" />
+      <param name="downsample_resolution" value="0.15" />
 
       <!-- quality gate: reject bad NDT corrections to protect UKF -->
-      <!-- max_correction_dist=100 allows large initial corrections from origin -->
       <param name="require_ndt_convergence" value="true" />
-      <param name="max_correction_dist" value="100.0" />
+      <param name="max_correction_dist" value="2.0" />
       <param name="max_correction_angle" value="0.8" />
 
       <!-- if "specify_init_pose" is true, pose estimator will be initialized with the following params -->
@@ -83,7 +85,14 @@
     </node>
 
     <node pkg="hdl_localization" type="plot_status.py" name="plot_estimation_errors" if="$(arg plot_estimation_errors)" />
+
+    <!-- 点云距离过滤器：滤除雷达支架/机体自反射点云 -->
+    <node name="lidar_range_filter" pkg="hdl_localization" type="lidar_range_filter.py" output="screen">
+      <param name="min_range" value="0.35" />
+      <param name="input_topic" value="$(arg raw_points_topic)" />
+      <param name="output_topic" value="$(arg points_topic)" />
+    </node>
+
     <include file="$(find navigation)/launch/navigation.launch"/>
-    <!-- rviz disabled: web UI replaces visualization -->
-    <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" /> 
+    <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" />
 </launch>

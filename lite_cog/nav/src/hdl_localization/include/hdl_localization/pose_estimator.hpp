@@ -33,8 +33,9 @@ public:
    * @param pos                 initial position
    * @param quat                initial orientation
    * @param cool_time_duration  during "cool time", prediction is not performed
+   * @param use_imu_acceleration integrate IMU linear acceleration into velocity
    */
-  PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, const Eigen::Vector3f& pos, const Eigen::Quaternionf& quat, double cool_time_duration = 1.0);
+  PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, const Eigen::Vector3f& pos, const Eigen::Quaternionf& quat, double cool_time_duration = 1.0, bool use_imu_acceleration = true);
   ~PoseEstimator();
 
   /**

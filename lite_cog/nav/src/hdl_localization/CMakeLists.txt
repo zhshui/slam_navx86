@@ -96,3 +96,6 @@ target_link_libraries(globalmap_server_nodelet
   ${PCL_LIBRARIES}
 )
 
+## install
+install(FILES nodelet_plugins.xml DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+

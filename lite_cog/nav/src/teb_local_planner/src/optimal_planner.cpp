@@ -260,7 +260,26 @@ bool TebOptimalPlanner::plan(const std::vector<geometry_msgs::PoseStamped>& init
     if (teb_.sizePoses()>0
         && (goal_.position() - teb_.BackPose().position()).norm() < cfg_->trajectory.force_reinit_new_goal_dist
         && fabs(g2o::normalize_theta(goal_.theta() - teb_.BackPose().theta())) < cfg_->trajectory.force_reinit_new_goal_angular) // actual warm start!
+    {
       teb_.updateAndPruneTEB(start_, goal_, cfg_->trajectory.min_samples); // update TEB
+      const double max_initial_gap = std::max(
+          0.75, 4.0 * cfg_->robot.max_vel_x * cfg_->trajectory.dt_ref);
+      if (teb_.hasLargeInitialGap(max_initial_gap))
+      {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "TEB warm start rejected: initial gap %.2fm exceeds %.2fm",
+            (teb_.Pose(1).position() - teb_.Pose(0).position()).norm(),
+            max_initial_gap);
+        teb_.clearTimedElasticBand();
+        teb_.initTrajectoryToGoal(
+            initial_plan, cfg_->robot.max_vel_x,
+            cfg_->robot.max_vel_theta,
+            cfg_->trajectory.global_plan_overwrite_orientation,
+            cfg_->trajectory.min_samples,
+            cfg_->trajectory.allow_init_with_backwards_motion);
+      }
+    }
     else // goal too far away -> reinit
     {
       ROS_DEBUG("New goal: distance to existing goal is higher than the specified threshold. Reinitalizing trajectories.");
@@ -690,6 +709,12 @@ void TebOptimalPlanner::AddEdgesViaPoints()
   {
     
     int index = teb_.findClosestTrajectoryPose(*vp_it, NULL, start_pose_idx);
+    if (index < 0)
+    {
+      if (cfg_->trajectory.via_points_ordered)
+        break;
+      continue;
+    }
     if (cfg_->trajectory.via_points_ordered)
       start_pose_idx = index+2; // skip a point to have a DOF inbetween for further via-points
      
@@ -697,7 +722,7 @@ void TebOptimalPlanner::AddEdgesViaPoints()
     if ( index > n-2 ) 
       index = n-2; // set to a pose before the goal, since we can move it away!
     // check if point coincides with start or is located before it
-    if ( index < 1)
+    if (index < 1)
     {
       if (cfg_->trajectory.via_points_ordered)
       {

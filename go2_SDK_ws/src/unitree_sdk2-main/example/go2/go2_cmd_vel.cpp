@@ -10,6 +10,7 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
 #include <std_msgs/String.h>
+#include <cmath>
 #include <unitree/robot/go2/sport/sport_client.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
 #include <unitree/idl/go2/SportModeState_.hpp>
@@ -57,6 +58,8 @@ class Custom
 {
 public:
   Custom()
+      : command_active_(false),
+        command_timeout_(0.5)
   {
     // 初始化 Unitree SDK 客户端
     sport_client.SetTimeout(10.0f);
@@ -71,15 +74,16 @@ public:
   {
     // 从 ROS param 读取滤波参数，可运行时动态调参
     nh.param<double>("smoothing_alpha_linear", alpha_linear_, 0.3);
-    nh.param<double>("smoothing_alpha_angular", alpha_angular_, 0.3);
-    nh.param<double>("angular_scale", angular_scale_, 1.5);
+    nh.param<double>("smoothing_alpha_angular", alpha_angular_, 0.7);
+    nh.param<double>("angular_scale", angular_scale_, 1.0);
+    nh.param<double>("command_timeout", command_timeout_, 0.5);
 
     filter_vx_.setAlpha(alpha_linear_);
     filter_vy_.setAlpha(alpha_linear_);
     filter_vyaw_.setAlpha(alpha_angular_);
 
-    ROS_INFO("Velocity filter: alpha_linear=%.2f, alpha_angular=%.2f, angular_scale=%.2f",
-             alpha_linear_, alpha_angular_, angular_scale_);
+    ROS_INFO("Velocity filter: alpha_linear=%.2f, alpha_angular=%.2f, angular_scale=%.2f, command_timeout=%.2fs",
+             alpha_linear_, alpha_angular_, angular_scale_, command_timeout_);
   }
 
   // ROS cmd_vel 回调函数
@@ -108,6 +112,21 @@ public:
     double raw_vy = msg->linear.y;
     double raw_vyaw = msg->angular.z;
 
+    const bool stop_command =
+        std::fabs(raw_vx) < 1e-4 &&
+        std::fabs(raw_vy) < 1e-4 &&
+        std::fabs(raw_vyaw) < 1e-4;
+    if (stop_command)
+    {
+      sport_client.Move(0.0, 0.0, 0.0);
+      resetMotionState();
+      ROS_INFO_THROTTLE(1.0, "CmdVel zero command -> Move(0,0,0), gait preserved");
+      return;
+    }
+
+    last_cmd_time_ = ros::SteadyTime::now();
+    command_active_ = true;
+
     // EMA 低通滤波
     double vx = filter_vx_.filter(raw_vx);
     double vy = filter_vy_.filter(raw_vy);
@@ -117,10 +136,29 @@ public:
     vyaw *= angular_scale_;
 
     // 调用 SDK 的 Move 接口
-    sport_client.Move(vx, vy, vyaw);
+    int32_t move_code = sport_client.Move(vx, vy, vyaw);
 
-    ROS_INFO("CmdVel raw(vx:%.2f vy:%.2f vyaw:%.2f) -> filtered(vx:%.2f vy:%.2f vyaw:%.2f)",
-             raw_vx, raw_vy, raw_vyaw, vx, vy, vyaw);
+    if (move_code != 0)
+    {
+      ROS_WARN("SportClient.Move returned %d for filtered(vx:%.2f vy:%.2f vyaw:%.2f)",
+               move_code, vx, vy, vyaw);
+    }
+    ROS_INFO("CmdVel raw(vx:%.2f vy:%.2f vyaw:%.2f) -> filtered(vx:%.2f vy:%.2f vyaw:%.2f) code=%d",
+             raw_vx, raw_vy, raw_vyaw, vx, vy, vyaw, move_code);
+  }
+
+  void WatchdogCallback(const ros::WallTimerEvent&)
+  {
+    if (!command_active_)
+      return;
+
+    const double age = (ros::SteadyTime::now() - last_cmd_time_).toSec();
+    if (age <= command_timeout_)
+      return;
+
+    sport_client.Move(0.0, 0.0, 0.0);
+    resetMotionState();
+    ROS_WARN("CmdVel timeout after %.3fs -> Move(0,0,0), gait preserved", age);
   }
 
   // ROS sport_cmd 回调: 接收 String 指令 (stand_up / sit / damp / stand_down / recovery_stand / stop_move / balance_stand / classic_walk)
@@ -149,10 +187,7 @@ public:
       ROS_INFO(" -> BalanceStand");
     } else if (cmd == "stop_move") {
       sport_client.StopMove();
-      // 停止时重置滤波器，避免历史值影响下次启动
-      filter_vx_.reset();
-      filter_vy_.reset();
-      filter_vyaw_.reset();
+      resetMotionState();
       ROS_INFO(" -> StopMove (filters reset)");
     } else if (cmd == "rise_sit") {
       sport_client.RiseSit();
@@ -161,7 +196,7 @@ public:
       sport_client.Hello();
       ROS_INFO(" -> Hello");
     } else if (cmd == "classic_walk") {
-      sport_client.ClassicWalk();
+      sport_client.ClassicWalk(true);
       ROS_INFO(" -> ClassicWalk");
     } else {
       ROS_WARN("Unknown sport_cmd: [%s]", cmd.c_str());
@@ -186,6 +221,18 @@ public:
   double alpha_linear_;
   double alpha_angular_;
   double angular_scale_;
+  bool command_active_;
+  double command_timeout_;
+  ros::SteadyTime last_cmd_time_;
+
+private:
+  void resetMotionState()
+  {
+    filter_vx_.reset();
+    filter_vy_.reset();
+    filter_vyaw_.reset();
+    command_active_ = false;
+  }
 };
 
 int main(int argc, char **argv)
@@ -193,6 +240,7 @@ int main(int argc, char **argv)
   // 初始化 ROS 节点
   ros::init(argc, argv, "go2_cmd_vel_bridge");
   ros::NodeHandle nh;
+  ros::NodeHandle private_nh("~");
 
   // 获取网卡参数 (从 launch 文件或命令行传入)
   std::string net_interface = "eth0";
@@ -207,20 +255,27 @@ int main(int argc, char **argv)
   Custom custom;
 
   // 初始化速度滤波器（从 ROS param 读取参数）
-  custom.initFilters(nh);
+  custom.initFilters(private_nh);
 
   // 创建 ROS 订阅者，监听 /cmd_vel 话题（速度控制）
   ros::Subscriber sub = nh.subscribe("cmd_vel", 10, &Custom::CmdVelCallback, &custom);
 
   // 创建 ROS 订阅者，监听 /go2/sport_cmd 话题（姿态指令）
   ros::Subscriber sport_sub = nh.subscribe("/go2/sport_cmd", 10, &Custom::SportCmdCallback, &custom);
+  ros::WallTimer watchdog_timer = nh.createWallTimer(
+      ros::WallDuration(0.1), &Custom::WatchdogCallback, &custom);
 
   ROS_INFO("Go2 CMD_VEL Bridge Started. Listening to /cmd_vel and /go2/sport_cmd...");
 
-  // 让机器站起来，准备接受运动指令
+  // 让机器进入可执行速度控制的站立/行走模式
   sleep(1); 
-  custom.sport_client.StandUp();
-  ROS_INFO("Robot standing up...");
+  int32_t stand_code = custom.sport_client.StandUp();
+  sleep(1);
+  int32_t balance_code = custom.sport_client.BalanceStand();
+  sleep(1);
+  int32_t classic_code = custom.sport_client.ClassicWalk(true);
+  ROS_INFO("Robot motion mode init: StandUp=%d BalanceStand=%d ClassicWalk=%d",
+           stand_code, balance_code, classic_code);
 
   // 循环等待 ROS 回调
   ros::spin();

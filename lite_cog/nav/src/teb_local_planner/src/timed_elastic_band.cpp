@@ -322,6 +322,13 @@ double TimedElasticBand::getAccumulatedDistance() const
   return dist;
 }
 
+bool TimedElasticBand::hasLargeInitialGap(double max_gap) const
+{
+  if (sizePoses() < 2)
+    return false;
+  return (Pose(1).position() - Pose(0).position()).norm() > max_gap;
+}
+
 bool TimedElasticBand::initTrajectoryToGoal(const PoseSE2& start, const PoseSE2& goal, double diststep, double max_vel_x, int min_samples, bool guess_backwards_motion)
 {
   if (!isInit())

@@ -7,7 +7,7 @@ track_unknown_space: false
 always_send_full_costmap: false
 
 # from cfg file
-transform_tolerance: 1.0
+transform_tolerance: 1.5
 update_frequency: 5
 publish_frequency: 3
 resolution: 0.1
@@ -42,13 +42,13 @@ stvl_obstacle_layer:
   map_save_duration:     60     #default 60s, how often to autosave
 
   livox_lidar:
-    topic: /livox/lidar_nav
+    topic: /livox/lidar_filtered
     sensor_frame: livox_frame
     observation_persistence: 0.0  #default 0, use all measurements taken during now-value, 0=latest 
     expected_update_rate: 10.0     #default 0, if not updating at this rate at least, remove from buffer
     data_type: PointCloud2
     min_obstacle_height: -0.15      #default 0, meters
-    max_obstacle_height: 0.6      #defaule 3, meters
+    max_obstacle_height: 1.5      #defaule 3, meters
     inf_is_valid: false           #default false, for laser scans    
     marking: true
     clearing: true
@@ -59,7 +59,7 @@ stvl_obstacle_layer:
     horizontal_fov_angle: 6.29
     decay_acceleration: 5
     filter: voxel               #default passthrough, apply "voxel", "passthrough", or no filter to sensor data, recommended to have at one filter on
-    voxel_min_points: 3           #default 0, minimum points per voxel for voxel filter
+    voxel_min_points: 5           #default 0, minimum points per voxel for voxel filter
     clear_after_reading: false    #default false, clear the buffer after the layer gets readings from it
     enabled: true
     model_type: 1
@@ -68,8 +68,8 @@ stvl_obstacle_layer:
 sob_layer:
   enabled: true
   inflate_unknown: false
-  inscribed_radius: 0.4
-  inflation_radius: 0.6
+  inscribed_radius: 0.4 # 机器狗裸机尺寸（长 70cm × 宽 31cm × 高 40cm）得出
+  inflation_radius: 0.45
   cost_scaling_factor: 10
 
 

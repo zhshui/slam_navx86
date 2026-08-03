@@ -16,6 +16,7 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, Twist
 from std_msgs.msg import String as RosString
 from sensor_msgs.msg import PointCloud2
+from actionlib_msgs.msg import GoalStatusArray
 
 # ====== 默认环境变量（可通过 export 覆盖） ======
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +30,7 @@ MQ_USER = os.environ.get("MQ_USER", "server")
 MQ_PASS = os.environ.get("MQ_PASS", "5bP!8aS3$kD7vF2&")
 MQ_VHOST = os.environ.get("MQ_VHOST", "/")
 MQ_EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
-MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D1000P3499GGW")
+MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D4000Q3K87FG1")
 GATEWAY_DIR = os.environ.get("GATEWAY_DIR", os.path.join(NAV_ROOT, "ros_web_gui_app/gateway"))
 DB_PATH = os.path.join(GATEWAY_DIR, "data", "nav_web.sqlite")
 SWITCH_HOOK = os.environ.get("MAP_SWITCH_HOOK", os.path.join(NAV_ROOT, "lite_cog/system/scripts/slam/switch_map_hook.sh"))
@@ -44,29 +45,47 @@ TF_BODY_FRAME = os.environ.get("TF_BODY_FRAME", "base_link")
 _SEP = "/" if MQ_TYPE == "mqtt" else "."
 CMD_TOPIC = f"nav{_SEP}{MQ_CLIENT_ID}{_SEP}cmd"
 
-# ====== TEB goal tolerance（从配置文件读取，用于到达判断） ======
-# 默认值（会在 main() 中从 teb_local_planner_params.yaml 重新加载）
-XY_GOAL_TOLERANCE = 0.5
-YAW_GOAL_TOLERANCE = 0.6
+# ====== TEB goal tolerance（从 web 持久化的 YAML 读取，用于到达判断） ======
+# Web 参数面板会把到达精度写入 teb_local_planner_params.yaml；MQ 状态判断以该 YAML 为准。
+XY_GOAL_TOLERANCE = 0.2
+YAW_GOAL_TOLERANCE = 0.2
+_TEB_TOLERANCE_MTIME = None
+_TEB_TOLERANCE_LAST_CHECK = 0.0
 
-def _load_teb_tolerances():
-    """从 teb_local_planner_params.yaml 读取 xy_goal_tolerance / yaw_goal_tolerance"""
+def _load_teb_tolerances(force=False):
+    """从 web 修改并持久化的 teb_local_planner_params.yaml 读取到达精度。"""
     global XY_GOAL_TOLERANCE, YAW_GOAL_TOLERANCE
+    global _TEB_TOLERANCE_MTIME, _TEB_TOLERANCE_LAST_CHECK
+    now = time.time()
+    if not force and now - _TEB_TOLERANCE_LAST_CHECK < 1.0:
+        return XY_GOAL_TOLERANCE, YAW_GOAL_TOLERANCE
+    _TEB_TOLERANCE_LAST_CHECK = now
+
     teb_cfg = os.environ.get("TEB_CONFIG",
         os.path.join(NAV_ROOT, "lite_cog/nav/src/navigation/config/teb_local_planner_params.yaml"))
     try:
+        mtime = os.path.getmtime(teb_cfg)
+        if not force and _TEB_TOLERANCE_MTIME == mtime:
+            return XY_GOAL_TOLERANCE, YAW_GOAL_TOLERANCE
         with open(teb_cfg, 'r') as f:
             cfg = yaml.safe_load(f) or {}
         teb = cfg.get("TebLocalPlannerROS", cfg)
-        XY_GOAL_TOLERANCE = float(teb.get("xy_goal_tolerance", XY_GOAL_TOLERANCE))
-        YAW_GOAL_TOLERANCE = float(teb.get("yaw_goal_tolerance", YAW_GOAL_TOLERANCE))
-        msg = f"[MQ] TEB goal tolerance loaded: xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
-        print(msg)
-        rospy.loginfo(msg)
+        xy = float(teb.get("xy_goal_tolerance", XY_GOAL_TOLERANCE))
+        yaw = float(teb.get("yaw_goal_tolerance", YAW_GOAL_TOLERANCE))
+        changed = (xy != XY_GOAL_TOLERANCE or yaw != YAW_GOAL_TOLERANCE or
+                   _TEB_TOLERANCE_MTIME != mtime)
+        XY_GOAL_TOLERANCE = xy
+        YAW_GOAL_TOLERANCE = yaw
+        _TEB_TOLERANCE_MTIME = mtime
+        if changed or force:
+            msg = f"[MQ] TEB goal tolerance loaded from YAML: xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
+            print(msg)
+            rospy.loginfo(msg)
     except Exception as e:
-        msg = f"[MQ] Failed to load TEB config ({e}), using defaults xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
+        msg = f"[MQ] Failed to load TEB YAML ({e}), using xy={XY_GOAL_TOLERANCE}, yaw={YAW_GOAL_TOLERANCE}"
         print(msg)
         rospy.logwarn(msg)
+    return XY_GOAL_TOLERANCE, YAW_GOAL_TOLERANCE
 
 # ====== MQ 协议抽象 ======
 if MQ_TYPE == "mqtt":
@@ -554,7 +573,11 @@ class Publisher:
         self._last_local_route_hash = None  # 上次发布的 local_route 哈希
         self._last_voxel_at = 0.0       # voxel_grid 最后接收时间，用于定位状态判断
         self._last_tf_at = 0.0          # TF 最后成功查询时间
+        self._last_mb_status = -1       # move_base action 状态（-1=未知）
+        self._teb_navigation_state = "IDLE"
         self.sub_voxel = None           # voxel_grid 订阅器
+        self.sub_mb_status = None       # move_base/status 订阅器
+        self.sub_teb_navigation_state = None
     def _init(self):
         self.tf_listener = tf.TransformListener()
         self.sub = rospy.Subscriber("/move_base/GlobalPlanner/plan", Path, self._on_plan)
@@ -563,8 +586,18 @@ class Publisher:
         self.sub_simple_goal = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self._on_simple_goal)
         self.sub_voxel = rospy.Subscriber("/move_base/local_costmap/stvl_obstacle_layer/voxel_grid",
                                           PointCloud2, self._on_voxel)
+        self.sub_mb_status = rospy.Subscriber("/move_base/status", GoalStatusArray, self._on_mb_status)
+        self.sub_teb_navigation_state = rospy.Subscriber(
+            "/move_base/TebLocalPlannerROS/navigation_state",
+            RosString, self._on_teb_navigation_state)
     def _on_voxel(self, m):
         self._last_voxel_at = time.time()
+    def _on_mb_status(self, m):
+        """跟踪 move_base action 状态，用于 TEB 到达后的最终裁决"""
+        if m.status_list:
+            self._last_mb_status = m.status_list[-1].status
+    def _on_teb_navigation_state(self, m):
+        self._teb_navigation_state = m.data
     def _publish(self, topic_suffix, body):
         """线程安全发布"""
         mq_publish(topic_suffix, body)
@@ -582,6 +615,8 @@ class Publisher:
         # 有新的 simple_goal 意味着新导航开始，重置到达状态
         self._has_arrived = False
         self._last_arrived_goal_pos = None
+        self._last_mb_status = -1       # 新目标 → 重置 move_base 状态
+        self._teb_navigation_state = "PATH_ALIGNING"
         self._goal_received_at = time.time()
         self._start_pos = None
         self._has_departed = False
@@ -589,6 +624,8 @@ class Publisher:
     def reset_pose_history(self):
         """收到新目标时清空位姿历史，重置起步状态"""
         self._pose_history.clear()
+        self._last_mb_status = -1       # 新目标 → 重置 move_base 状态
+        self._teb_navigation_state = "PATH_ALIGNING"
         self._goal_received_at = time.time()
         self._start_pos = None       # 下个循环从 TF 获取当前位置作为起点
         self._start_yaw = None       # 下个循环从 TF 获取当前朝向作为起点
@@ -641,10 +678,45 @@ class Publisher:
     def _compute_motion_state(self):
         """计算详细运动状态：运动中/阻塞/到达
 
-        20cm 直连距离分界线：
-        - dist_to_goal < 0.2m → 进入到达判定，跳过阻塞判定
-        - dist_to_goal >= 0.2m → 进入阻塞判定，跳过到达判定
+        到达判断与 Web 参数面板写入的 TEB YAML 保持一致：
+        - dist_to_goal <= xy_goal_tolerance 才能进入到达/对齐判断
+        - yaw_diff <= yaw_goal_tolerance 才允许发布"到达"
+
+        move_base 的 SUCCEEDED 状态是最高优先级的到达信号：
+        TEB 停止控制后机器人可能漂移（四足机器人尤其容易偏航漂移），
+        导致 MQ 独立判断永远卡在"对齐中"。因此以 move_base 为准。
         """
+        base_motion_state = (
+            "对齐中" if self._teb_navigation_state == "GOAL_ALIGNING"
+            else "运动中"
+        )
+        controller_allows_blocking = self._teb_navigation_state in (
+            "PATH_ALIGNING", "ACTIVE", "GOAL_ALIGNING"
+        )
+        previous_allows_blocking = self._computed_nav_state in (
+            "运动中", "对齐中", "阻塞"
+        )
+        can_report_blocked = (
+            controller_allows_blocking and previous_allows_blocking
+        )
+        if not controller_allows_blocking:
+            self._blocked_since = 0.0
+
+        # move_base 已声明到达 → 无条件信任（TEB 停止控制后机器人可能漂移）
+        # 使用 /move_base/status topic（而非 mb.client.get_state()），因为目标可能是
+        # 通过 gateway 或 nav_goal 发送的，mb.client 不一定跟踪了当前目标。
+        if self._last_mb_status == 3:  # actionlib_msgs/GoalStatus::SUCCEEDED
+            if not self._has_arrived:
+                self._has_arrived = True
+                # 用之前记录的 goal_pt 或当前位姿作为到达点
+                try:
+                    pos, _ = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
+                    self._last_arrived_goal_pos = (pos[0], pos[1])
+                except:
+                    pass
+            return "到达"
+
+        xy_tol, yaw_tol = _load_teb_tolerances()
         has_plan = self.last_plan is not None and len(self.last_plan.poses) > 0
 
         # 脏路径检测：旧 move_base 在被 kill 前最后发的一条 plan，
@@ -656,7 +728,7 @@ class Publisher:
                 pgy = self.last_plan.poses[-1].pose.position.y
                 d = math.sqrt((pgx - self._last_arrived_goal_pos[0])**2 +
                               (pgy - self._last_arrived_goal_pos[1])**2)
-                if d < XY_GOAL_TOLERANCE:
+                if d < xy_tol:
                     # 脏路径：指向已到达的旧目标，视为无路线
                     self.last_plan = None
                     self.last_local_plan = None
@@ -664,14 +736,15 @@ class Publisher:
             except: pass
 
         now = time.time()
-        ARRIVAL_GATE = 0.2  # 20cm：到达/阻塞互斥分界线
 
         # 0) 计算当前位置到目标点的直连距离（TF 只查一次，后续复用）
         cur_pos = None       # (x, y)
         cur_ori = None       # quaternion [x,y,z,w]
         dist_to_goal = None
         goal_pt = None       # (x, y) 目标点坐标
-        if has_plan:
+        if self._last_simple_goal:
+            goal_pt = (self._last_simple_goal[0], self._last_simple_goal[1])
+        elif has_plan:
             goal_pt = (self.last_plan.poses[-1].pose.position.x,
                        self.last_plan.poses[-1].pose.position.y)
         elif state.last_goal:
@@ -685,10 +758,11 @@ class Publisher:
                 cur_ori = ori
                 dist_to_goal = math.sqrt((cur_pos[0] - goal_pt[0])**2 + (cur_pos[1] - goal_pt[1])**2)
             except: pass
-        near_goal = dist_to_goal is not None and dist_to_goal < ARRIVAL_GATE
+        within_xy_tolerance = dist_to_goal is not None and dist_to_goal <= xy_tol
+        near_goal = dist_to_goal is not None and dist_to_goal < max(0.2, xy_tol)
 
-        # === 到达判定：只在 20cm 内才可能，已到达则跳过防止状态回退 ===
-        if has_plan and near_goal and not self._has_arrived:
+        # === 到达判定：必须满足 Web/YAML 中的 xy_goal_tolerance ===
+        if within_xy_tolerance and not self._has_arrived:
             if self._goal_received_at == 0.0:
                 self._goal_received_at = now
             try:
@@ -696,7 +770,7 @@ class Publisher:
                 is_same_goal = (
                     self._last_arrived_goal_pos is not None and
                     math.sqrt((goal_pt[0] - self._last_arrived_goal_pos[0])**2 +
-                              (goal_pt[1] - self._last_arrived_goal_pos[1])**2) < XY_GOAL_TOLERANCE
+                              (goal_pt[1] - self._last_arrived_goal_pos[1])**2) < xy_tol
                 )
                 # 同一目标 + 未标记到达 = 收到新目标后旧路径重入，不触发到达
                 if is_same_goal and not self._has_arrived:
@@ -704,12 +778,13 @@ class Publisher:
                 else:
                     _, _, cur_yaw = tf.transformations.euler_from_quaternion(
                         [cur_ori[0], cur_ori[1], cur_ori[2], cur_ori[3]])
-                    target_yaw = None
-                    last_ori = self.last_plan.poses[-1].pose.orientation
-                    if not (abs(last_ori.x) < 1e-6 and abs(last_ori.y) < 1e-6 and
-                            abs(last_ori.z) < 1e-6 and abs(last_ori.w) < 1e-6):
-                        _, _, target_yaw = tf.transformations.euler_from_quaternion(
-                            [last_ori.x, last_ori.y, last_ori.z, last_ori.w])
+                    target_yaw = self._last_simple_goal[2] if self._last_simple_goal else None
+                    if target_yaw is None and has_plan:
+                        last_ori = self.last_plan.poses[-1].pose.orientation
+                        if not (abs(last_ori.x) < 1e-6 and abs(last_ori.y) < 1e-6 and
+                                abs(last_ori.z) < 1e-6 and abs(last_ori.w) < 1e-6):
+                            _, _, target_yaw = tf.transformations.euler_from_quaternion(
+                                [last_ori.x, last_ori.y, last_ori.z, last_ori.w])
                     if target_yaw is None:
                         lg = state.last_goal
                         if lg:
@@ -719,16 +794,16 @@ class Publisher:
                     if target_yaw is not None:
                         yaw_diff = abs(cur_yaw - target_yaw)
                         yaw_diff = min(yaw_diff, 2 * math.pi - yaw_diff)
-                        if yaw_diff < YAW_GOAL_TOLERANCE:
+                        if yaw_diff <= yaw_tol:
                             if self._is_stationary():
                                 if not is_same_goal:
                                     self._last_arrived_goal_pos = goal_pt
                                 self._has_arrived = True
                                 return "到达"
                             else:
-                                return "对齐中"
+                                base_motion_state = "对齐中"
                         else:
-                            return "对齐中"
+                            base_motion_state = "对齐中"
                     else:
                         if self._is_stationary():
                             if not is_same_goal:
@@ -736,7 +811,7 @@ class Publisher:
                             self._has_arrived = True
                             return "到达"
                         else:
-                            return "对齐中"
+                            base_motion_state = "对齐中"
             except: pass
 
         # 1.5) 到达后状态冻结：防止机器人微小漂移导致状态在"到达/运动中"间振荡。
@@ -749,7 +824,7 @@ class Publisher:
                 new_goal = (self._last_simple_goal[0], self._last_simple_goal[1])
                 same = (math.sqrt((new_goal[0] - self._last_arrived_goal_pos[0])**2 +
                                   (new_goal[1] - self._last_arrived_goal_pos[1])**2)
-                        < XY_GOAL_TOLERANCE)
+                        < xy_tol)
                 if not same:
                     self._has_arrived = False
                     self._last_arrived_goal_pos = None
@@ -775,15 +850,19 @@ class Publisher:
         # === 无路线超时（与目标距离无关：目标在障碍物里/定位漂移等） ===
         BLOCK_NO_PLAN_TIMEOUT = 10.0  # 有目标但无路线超过此时长 → 阻塞
         if not has_plan and not self._has_arrived and self._goal_received_at > 0 \
-                and now - self._goal_received_at > BLOCK_NO_PLAN_TIMEOUT:
+                and now - self._goal_received_at > BLOCK_NO_PLAN_TIMEOUT \
+                and can_report_blocked:
             return "阻塞"
 
         # 4) 无路线且无活跃目标 → 运动中（等待规划，TF 暂不可用）
         if not has_plan and self._start_pos is None:
-            return "运动中"
+            return base_motion_state
 
-        # === 阻塞判定：只在 20cm 外才可能（运动速度/位移检测） ===
-        if not near_goal:
+        # === 阻塞判定：运动中在近目标区外检测；对齐中允许在近目标区内检测 ===
+        blocking_distance_allowed = (
+            not near_goal or base_motion_state == "对齐中"
+        )
+        if blocking_distance_allowed and controller_allows_blocking:
             DEPART_DIST = 0.5        # 离开起点超过此距离才算已起步 (m)
             BLOCK_WINDOW = 3.0       # 阻塞判断窗口（秒）
             BLOCK_SPEED = 0.03       # 平均线速度低于此值视为卡死 (m/s)
@@ -816,7 +895,9 @@ class Publisher:
                     if dist_from_start >= DEPART_DIST or yaw_from_start >= YAW_DEPART_THRESH:
                         self._has_departed = True
                         self._pose_history.clear()  # 清空起步前静止采样，阻塞判定只看起步后的运动
-                    elif self._goal_received_at > 0 and now - self._goal_received_at > 10.0:
+                    elif self._goal_received_at > 0 \
+                            and now - self._goal_received_at > 10.0 \
+                            and can_report_blocked:
                         return "阻塞"  # 10秒未起步 → 直接阻塞，不等待 BLOCK_PERSIST
                     # else: 未起步未超时 → 不阻塞，is_blocked 保持 False
 
@@ -830,13 +911,17 @@ class Publisher:
                             dx = last_ph[1] - first[1]
                             dy = last_ph[2] - first[2]
                             avg_speed = math.sqrt(dx*dx + dy*dy) / dt_hist
-                            if avg_speed < BLOCK_SPEED:
+                            dyaw = abs(last_ph[3] - first[3])
+                            dyaw = min(dyaw, 2 * math.pi - dyaw)
+                            avg_angular = dyaw / dt_hist
+                            if base_motion_state == "对齐中":
+                                # 对齐时允许原地旋转；线速度和角速度都无进展才算阻塞。
+                                if avg_speed < BLOCK_SPEED and avg_angular < 0.05:
+                                    is_blocked = True
+                            elif avg_speed < BLOCK_SPEED:
                                 is_blocked = True
                             else:
                                 # 原地旋转检查：几乎不移动但角速度明显 → 卡住原地转
-                                dyaw = abs(last_ph[3] - first[3])
-                                dyaw = min(dyaw, 2 * math.pi - dyaw)
-                                avg_angular = dyaw / dt_hist
                                 if avg_speed < 0.05 and avg_angular > 0.2:
                                     is_blocked = True
             except: pass
@@ -845,13 +930,16 @@ class Publisher:
             if is_blocked:
                 if self._blocked_since == 0.0:
                     self._blocked_since = now
-                elif now - self._blocked_since >= BLOCK_PERSIST:
+                elif now - self._blocked_since >= BLOCK_PERSIST \
+                        and can_report_blocked:
                     return "阻塞"
                 # 未满 10 秒 → 继续返回运动中，累积计时
             else:
                 self._blocked_since = 0.0  # 条件不满足 → 重置计时
+        else:
+            self._blocked_since = 0.0
 
-        return "运动中"
+        return base_motion_state
     def run(self):
         self._init()
         self._run = True
@@ -1115,7 +1203,7 @@ def _read_active_map():
 def main():
     global init_pub
     rospy.init_node("mq_adapter"); rospy.loginfo(f"[MQ] starting... (type={MQ_TYPE})")
-    _load_teb_tolerances()
+    _load_teb_tolerances(force=True)
     mq_connect()
     init_pub = rospy.Publisher("/initialpose", PoseWithCovarianceStamped, queue_size=1, latch=True)
     mb.connect()

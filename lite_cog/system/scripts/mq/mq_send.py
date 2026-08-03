@@ -12,10 +12,13 @@ import json
 #  改这里 ↓ 
 # ═══════════════════════════════════════════════════════════════
 MSG = json.dumps({
-  "header": { "msg_type": "cmd" },
+  "header": {
+  "msg_type": "cmd",
+  
+},
   "body": {
     "cmd": "nav_goal",
-    "goal": { "x": 1.55, "y": 0.039 ,"yaw": 1.57, "frame_id": "map" }
+    "goal": { "x": 0, "y": 0, "yaw": 1.57, "frame_id": "map" }
   }
   })
 # ═══════════════════════════════════════════════════════════════
@@ -26,7 +29,7 @@ MQ_HOST = os.environ.get("MQ_HOST", "49.233.183.203")
 MQ_PORT = int(os.environ.get("MQ_PORT", "1883"))
 MQ_USER = os.environ.get("MQ_USER", "server")
 MQ_PASS = os.environ.get("MQ_PASS", "5bP!8aS3$kD7vF2&")
-MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D1000P3499GGW")
+MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D4000Q3K87FG1")
 EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
 VHOST = os.environ.get("MQ_VHOST", "/")
 

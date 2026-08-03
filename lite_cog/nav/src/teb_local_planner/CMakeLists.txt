@@ -185,6 +185,8 @@ add_library(teb_local_planner
    src/timed_elastic_band.cpp
    src/optimal_planner.cpp
    src/obstacles.cpp
+   src/path_heading.cpp
+   src/terminal_pid.cpp
    src/visualization.cpp
    src/recovery_behaviors.cpp
    src/teb_config.cpp
@@ -271,6 +273,16 @@ if (CATKIN_ENABLE_TESTING)
   catkin_add_gtest(test_teb_basics test/teb_basics.cpp)
   if(TARGET test_teb_basics)
      target_link_libraries(test_teb_basics teb_local_planner)
+  endif()
+
+  catkin_add_gtest(test_path_heading test/path_heading_test.cpp)
+  if(TARGET test_path_heading)
+     target_link_libraries(test_path_heading teb_local_planner)
+  endif()
+
+  catkin_add_gtest(test_terminal_pid test/terminal_pid_test.cpp)
+  if(TARGET test_terminal_pid)
+     target_link_libraries(test_terminal_pid teb_local_planner)
   endif()
 endif()
 

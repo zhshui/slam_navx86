@@ -14,8 +14,9 @@ namespace hdl_localization {
  * @param pos                 initial position
  * @param quat                initial orientation
  * @param cool_time_duration  during "cool time", prediction is not performed
+ * @param use_imu_acceleration integrate IMU linear acceleration into velocity
  */
-PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, const Eigen::Vector3f& pos, const Eigen::Quaternionf& quat, double cool_time_duration)
+PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, const Eigen::Vector3f& pos, const Eigen::Quaternionf& quat, double cool_time_duration, bool use_imu_acceleration)
     : registration(registration), cool_time_duration(cool_time_duration) {
   last_observation = Eigen::Matrix4f::Identity();
   last_observation.block<3, 3>(0, 0) = quat.toRotationMatrix();
@@ -41,7 +42,7 @@ PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registratio
 
   Eigen::MatrixXf cov = Eigen::MatrixXf::Identity(16, 16) * 0.01;
 
-  PoseSystem system;
+  PoseSystem system(use_imu_acceleration);
   ukf.reset(new kkl::alg::UnscentedKalmanFilterX<float, PoseSystem>(system, 16, 6, 7, process_noise, measurement_noise, mean, cov));
 }
 
@@ -194,11 +195,11 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const ros::Ti
     init_guess.block<3, 3>(0, 0) = Eigen::Quaternionf(fused_mean[3], fused_mean[4], fused_mean[5], fused_mean[6]).normalized().toRotationMatrix();
   }
 
-  ROS_INFO("correct: before align, cov norm=%f", ukf->cov.norm());
+  ROS_DEBUG("correct: before align, cov norm=%f", ukf->cov.norm());
   pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
   registration->setInputSource(cloud);
   registration->align(*aligned, init_guess);
-  ROS_INFO("correct: after align, converged=%d", (int)registration->hasConverged());
+  ROS_DEBUG("correct: after align, converged=%d", (int)registration->hasConverged());
 
   Eigen::Matrix4f trans = registration->getFinalTransformation();
   Eigen::Vector3f p = trans.block<3, 1>(0, 3);
@@ -243,18 +244,18 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const ros::Ti
 
   wo_pred_error = no_guess.inverse() * registration->getFinalTransformation();
 
-  ROS_INFO("correct: before ukf->correct, cov norm=%f, hasNaN=%d",
+  ROS_DEBUG("correct: before ukf->correct, cov norm=%f, hasNaN=%d",
     ukf->cov.norm(), (int)ukf->cov.hasNaN());
-  ROS_INFO("correct: ukf mean norm=%f, cov diag [0]=%f [6]=%f [9]=%f",
+  ROS_DEBUG("correct: ukf mean norm=%f, cov diag [0]=%f [6]=%f [9]=%f",
     ukf->mean.norm(), ukf->cov(0,0), ukf->cov(6,6), ukf->cov(9,9));
-  ROS_INFO("correct: observation norm=%f", observation.norm());
+  ROS_DEBUG("correct: observation norm=%f", observation.norm());
   try {
     ukf->correct(observation);
   } catch (const std::exception& e) {
     ROS_ERROR("ukf->correct threw: %s", e.what());
     throw;
   }
-  ROS_INFO("correct: after ukf->correct");
+  ROS_DEBUG("correct: after ukf->correct");
   imu_pred_error = imu_guess.inverse() * registration->getFinalTransformation();
 
   if(odom_ukf) {

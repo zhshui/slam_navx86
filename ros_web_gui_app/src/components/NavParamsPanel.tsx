@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'react-toastify';
 
 // ============================================================
 // 导航参数配置面板 — 所有可调参数集中管理
@@ -31,8 +32,8 @@ const PARAM_DEFS: Record<string, ParamDef[]> = {
     { key: 'cost_scaling_factor',  label: '代价衰减系数',   min: 0.5,  max: 20, step: 0.5,  default: 10.0, unit: '',   desc: '代价指数衰减率，越小膨胀越硬、越大越软', apply: 'rosparam' },
   ],
   '到达判断': [
-    { key: 'xy_goal_tolerance',    label: '到达精度',       min: 0.10, max: 1.0, step: 0.02, default: 0.10, unit: 'm',  desc: '距目标点此距离内即判定到达', apply: 'reconfigure' },
-    { key: 'yaw_goal_tolerance',   label: '朝向精度',       min: 0.05, max: 1.0, step: 0.05, default: 0.15, unit: 'rad', desc: '朝向误差此范围内即判定到达', apply: 'reconfigure' },
+    { key: 'xy_goal_tolerance',    label: '到达精度',       min: 0.08, max: 1.0, step: 0.02, default: 0.20, unit: 'm',  desc: '距目标点此距离内即判定到达', apply: 'rosparam' },
+    { key: 'yaw_goal_tolerance',   label: '朝向精度',       min: 0.05, max: 1.0, step: 0.05, default: 0.20, unit: 'rad', desc: '朝向误差此范围内即判定到达', apply: 'rosparam' },
   ],
 };
 
@@ -73,8 +74,10 @@ interface NavParamsPanelProps {
   onScanDistanceChange: (v: number) => void;
 }
 
-export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance, onPcDensityChange, onScanDistanceChange }: NavParamsPanelProps) {
+export function NavParamsPanel({ gatewayToken, onClose, pcDensity: _pcDensity, scanDistance: _scanDistance, onPcDensityChange, onScanDistanceChange }: NavParamsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const commitTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const committedValuesRef = useRef<Record<string, number>>({});
 
   // 原生触摸滚动支持
   useEffect(() => {
@@ -100,8 +103,31 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
   useEffect(() => {
     saveValues(values);
   }, [values]);
+  useEffect(() => {
+    committedValuesRef.current = values;
+  }, []);
+  useEffect(() => {
+    return () => {
+      for (const timer of Object.values(commitTimersRef.current)) clearTimeout(timer);
+      commitTimersRef.current = {};
+    };
+  }, []);
 
-  const RESTART_PARAM_KEYS = new Set(['min_obstacle_height', 'max_obstacle_height', 'inflation_radius', 'cost_scaling_factor']);
+  const RESTART_PARAM_KEYS = new Set(['min_obstacle_height', 'max_obstacle_height', 'inflation_radius', 'cost_scaling_factor', 'xy_goal_tolerance', 'yaw_goal_tolerance']);
+
+  const postGateway = useCallback(async (path: string, body?: unknown) => {
+    if (!gatewayToken) throw new Error('未登录网关');
+    const apiBase = (await import('../api/gatewayApi')).apiBase;
+    const res = await fetch(`${apiBase}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+  }, [gatewayToken]);
 
   const applyParam = useCallback(async (key: string, value: number, apply: ParamDef['apply']) => {
     if (apply === 'local') {
@@ -109,38 +135,80 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
       if (key === 'scan_distance') onScanDistanceChange(value);
       return;
     }
-    if (!gatewayToken) return;
-    const apiBase = (await import('../api/gatewayApi')).apiBase;
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` };
-    try {
-      if (apply === 'rosparam') {
-        await fetch(`${apiBase}/api/nav/param/rosparam`, {
-          method: 'POST', headers, body: JSON.stringify({ key, value }),
-        });
-        if (!RESTART_PARAM_KEYS.has(key)) {
-          await fetch(`${apiBase}/api/nav/costmap-clear`, {
-            method: 'POST', headers,
-          });
-        }
-      } else {
-        // TEB 参数：dynamic_reconfigure 即时生效
-        await fetch(`${apiBase}/api/nav/param/reconfigure`, {
-          method: 'POST', headers, body: JSON.stringify({ key, value }),
-        });
+    if (apply === 'rosparam') {
+      await postGateway('/api/nav/param/rosparam', { key, value });
+      if (!RESTART_PARAM_KEYS.has(key)) {
+        await postGateway('/api/nav/costmap-clear');
       }
-    } catch {}
-  }, [gatewayToken, onPcDensityChange, onScanDistanceChange]);
+    } else {
+      // TEB 参数：dynamic_reconfigure 即时生效
+      await postGateway('/api/nav/param/reconfigure', { key, value });
+    }
+  }, [onPcDensityChange, onScanDistanceChange, postGateway]);
 
-  const handleChange = (key: string, value: number, apply: ParamDef['apply']) => {
+  useEffect(() => {
+    if (!gatewayToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const apiBase = (await import('../api/gatewayApi')).apiBase;
+        const res = await fetch(`${apiBase}/api/nav/params`, {
+          headers: { Authorization: `Bearer ${gatewayToken}` },
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const next: Record<string, number> = {};
+        for (const p of ALL_PARAMS) {
+          const value = data?.params?.[p.key];
+          if (typeof value === 'number' && Number.isFinite(value)) next[p.key] = value;
+        }
+        if (cancelled || Object.keys(next).length === 0) return;
+        setValues(prev => {
+          const merged = { ...prev, ...next };
+          committedValuesRef.current = merged;
+          return merged;
+        });
+      } catch (err) {
+        toast.error(`参数读取失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [gatewayToken]);
+
+  const handlePreviewChange = (key: string, value: number, apply: ParamDef['apply']) => {
     setValues(prev => ({ ...prev, [key]: value }));
-    applyParam(key, value, apply);
+    if (apply === 'local') {
+      if (key === 'pc_density') onPcDensityChange(value);
+      if (key === 'scan_distance') onScanDistanceChange(value);
+      committedValuesRef.current = { ...committedValuesRef.current, [key]: value };
+    }
+  };
+
+  const handleCommit = (key: string, value: number, apply: ParamDef['apply']) => {
+    if (commitTimersRef.current[key]) clearTimeout(commitTimersRef.current[key]);
+    commitTimersRef.current[key] = setTimeout(() => {
+      const prevValue = committedValuesRef.current[key] ?? ALL_PARAMS.find(p => p.key === key)?.default ?? value;
+      applyParam(key, value, apply).then(() => {
+        committedValuesRef.current = { ...committedValuesRef.current, [key]: value };
+      }).catch((err) => {
+        setValues(prev => ({ ...prev, [key]: prevValue }));
+        toast.error(`参数写入失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      });
+    }, 120);
   };
 
   const handleResetAll = () => {
     const defaults = getDefaults();
     setValues(defaults);
     for (const p of ALL_PARAMS) {
-      applyParam(p.key, p.default, p.apply);
+      applyParam(p.key, p.default, p.apply).then(() => {
+        committedValuesRef.current = { ...committedValuesRef.current, [p.key]: p.default };
+      }).catch((err) => {
+        toast.error(`${p.label} 重置失败: ${err instanceof Error ? err.message : '未知错误'}`);
+      });
     }
   };
 
@@ -195,8 +263,6 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
     input.click();
   };
 
-  const param = (key: string) => ALL_PARAMS.find(p => p.key === key)!;
-
   return (
     <div ref={panelRef} style={{
       position: 'absolute', top: 0, right: 0, bottom: 0, width: '340px',
@@ -241,7 +307,10 @@ export function NavParamsPanel({ gatewayToken, onClose, pcDensity, scanDistance,
                   type="range"
                   min={p.min} max={p.max} step={p.step}
                   value={val}
-                  onChange={(e) => handleChange(p.key, Number(e.target.value), p.apply)}
+                  onChange={(e) => handlePreviewChange(p.key, Number(e.target.value), p.apply)}
+                  onPointerUp={(e) => handleCommit(p.key, Number(e.currentTarget.value), p.apply)}
+                  onKeyUp={(e) => handleCommit(p.key, Number(e.currentTarget.value), p.apply)}
+                  onBlur={(e) => handleCommit(p.key, Number(e.currentTarget.value), p.apply)}
                   style={{ width: '100%', accentColor: '#4af', height: 4, cursor: 'pointer', marginTop: 2 }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#666' }}>

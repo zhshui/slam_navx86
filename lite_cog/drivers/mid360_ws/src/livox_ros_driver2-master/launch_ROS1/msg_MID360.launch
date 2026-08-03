@@ -30,7 +30,8 @@
 
 	<!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base2livox"   args= "0.18786 0 0.12902 0 0.1308995 0 0.990268 /base_link /livox_frame" /> -->
 	
-	<node pkg="tf2_ros" type="static_transform_publisher" name="base2livox"   args= "0 0 0 0 0 0 1 /base_link /livox_frame" />
+	<!-- Effective planar extrinsic calibrated from an in-place rotation test. -->
+	<node pkg="tf2_ros" type="static_transform_publisher" name="base2livox"   args= "-0.0535 0.0494 0 0 0 0 1 /base_link /livox_frame" />
 
 	<!-- <remap from="/livox/lidar" to="/rslidar_points" /> -->
 	

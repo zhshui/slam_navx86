@@ -48,6 +48,8 @@ public:
     mt_nh = getMTNodeHandle();
     private_nh = getPrivateNodeHandle();
 
+    use_imu_acceleration = private_nh.param<bool>("use_imu_acceleration", true);
+
     initialize_params();
 
     robot_odom_frame_id = private_nh.param<std::string>("robot_odom_frame_id", "robot_odom");
@@ -58,6 +60,7 @@ public:
     invert_gyro = private_nh.param<bool>("invert_gyro", false);
     if (use_imu) {
       NODELET_INFO("enable imu-based prediction");
+      NODELET_INFO_STREAM("IMU acceleration integration is " << (use_imu_acceleration ? "enabled" : "disabled"));
       imu_sub = mt_nh.subscribe("/gpsimu_driver/imu_data", 256, &HdlLocalizationNodelet::imu_callback, this);
     }
     points_sub = mt_nh.subscribe("/velodyne_points", 5, &HdlLocalizationNodelet::points_callback, this);
@@ -170,7 +173,8 @@ private:
       pose_estimator.reset(new hdl_localization::PoseEstimator(registration,
         Eigen::Vector3f(private_nh.param<double>("init_pos_x", 0.0), private_nh.param<double>("init_pos_y", 0.0), private_nh.param<double>("init_pos_z", 0.0)),
         Eigen::Quaternionf(private_nh.param<double>("init_ori_w", 1.0), private_nh.param<double>("init_ori_x", 0.0), private_nh.param<double>("init_ori_y", 0.0), private_nh.param<double>("init_ori_z", 0.0)),
-        private_nh.param<double>("cool_time_duration", 0.5)
+        private_nh.param<double>("cool_time_duration", 0.5),
+        use_imu_acceleration
       ));
       pose_estimator->set_correction_thresholds(max_correction_dist, max_correction_angle, require_ndt_convergence);
     }
@@ -246,7 +250,7 @@ private:
       NODELET_ERROR("waiting for initial pose input!!");
       return;
     }
-    NODELET_INFO("points_cb: before predict, cov norm=%f", pose_estimator->cov_norm());
+    NODELET_DEBUG("points_cb: before predict, cov norm=%f", pose_estimator->cov_norm());
     Eigen::Matrix4f before = pose_estimator->matrix();
 
     // predict
@@ -377,7 +381,8 @@ private:
       registration,
       pose.translation(),
       Eigen::Quaternionf(pose.linear()),
-      private_nh.param<double>("cool_time_duration", 0.5)));
+      private_nh.param<double>("cool_time_duration", 0.5),
+      use_imu_acceleration));
     pose_estimator->set_correction_thresholds(max_correction_dist, max_correction_angle, require_ndt_convergence);
 
     relocalizing = false;
@@ -399,7 +404,8 @@ private:
             registration,
             Eigen::Vector3f(p.x, p.y, p.z),
             Eigen::Quaternionf(q.w, q.x, q.y, q.z),
-            private_nh.param<double>("cool_time_duration", 0.5))
+            private_nh.param<double>("cool_time_duration", 0.5),
+            use_imu_acceleration)
     );
     pose_estimator->set_correction_thresholds(max_correction_dist, max_correction_angle, require_ndt_convergence);
   }
@@ -550,6 +556,7 @@ private:
   std::string odom_child_frame_id;
 
   bool use_imu;
+  bool use_imu_acceleration;
   bool invert_acc;
   bool invert_gyro;
   ros::Subscriber imu_sub;
