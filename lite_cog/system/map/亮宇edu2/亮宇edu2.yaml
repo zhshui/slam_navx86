@@ -1,0 +1,6 @@
+image: 亮宇edu2.pgm
+resolution: 0.05000000074505806
+origin: [-9.19938, -17.0148, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

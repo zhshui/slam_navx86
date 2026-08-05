@@ -1,4 +1,3 @@
-cd /home/shui/LY/lite_cog/drivers/orbbec_ws
+cd /home/unitree/go2_nav/lite_cog/drivers/orbbec_ws
 source devel/setup.bash
 roslaunch orbbec_camera dr-gemini2.launch &
-

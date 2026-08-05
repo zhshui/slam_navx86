@@ -24,6 +24,8 @@ ros_web_gui_app/gateway/uploads/
 
 # ===== Nested external repos =====
 SC-FAST-LIO-main/src/livox_ros_driver/Livox-SDK/
+SC-FAST-LIO-main/src/Livox-SDK2/
+lite_cog/drivers/Livox-SDK2/
 
 # ===== Binary packages =====
 *.zip
@@ -44,3 +46,8 @@ Thumbs.db
 
 # ===== Claude =====
 .claude/
+
+# ===== Local runtime logs / backups =====
+logs/
+lite_cog/slam/src/faster-lio/launch/Log/
+lite_cog/system/scripts/mq-bak/

@@ -1,0 +1,13 @@
+digraph G {
+"base_link" -> "livox_frame"[label="Broadcaster: /base2livox\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1785833306.814 sec old)\nBuffer length: 0.000 sec\n"];
+"map" -> "base_link"[label="Broadcaster: /velodyne_nodelet_manager\nAverage rate: 10.222 Hz\nMost recent transform: 1785833306.046 ( 0.768 sec old)\nBuffer length: 4.500 sec\n"];
+"camera_init" -> "body"[label="Broadcaster: /laserMapping\nAverage rate: 10.222 Hz\nMost recent transform: 1785833306.093 ( 0.721 sec old)\nBuffer length: 4.304 sec\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1785833306.814"[ shape=plaintext ] ;
+ }->"map";
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1785833306.814"[ shape=plaintext ] ;
+ }->"camera_init";
+}

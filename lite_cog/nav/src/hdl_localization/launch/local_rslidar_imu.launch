@@ -94,5 +94,7 @@
     </node>
 
     <include file="$(find navigation)/launch/navigation.launch"/>
-    <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" />
+    <!-- rviz disabled in headless operation; it crashes without a display
+         and can peg the CPU (velodyne_nodelet_manager 100%), stalling localization -->
+    <!-- <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" /> -->
 </launch>

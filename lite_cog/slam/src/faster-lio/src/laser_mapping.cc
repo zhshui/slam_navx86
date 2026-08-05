@@ -244,13 +244,9 @@ void LaserMapping::SubAndPubToROS(ros::NodeHandle &nh) {
     nh.param<std::string>("common/lid_topic", lidar_topic, "/livox/lidar");
     nh.param<std::string>("common/imu_topic", imu_topic, "/livox/imu");
 
-    if (preprocess_->GetLidarType() == LidarType::AVIA) {
-        sub_pcl_ = nh.subscribe<livox_ros_driver::CustomMsg>(
-            lidar_topic, 200000, [this](const livox_ros_driver::CustomMsg::ConstPtr &msg) { LivoxPCLCallBack(msg); });
-    } else {
-        sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
-            lidar_topic, 200000, [this](const sensor_msgs::PointCloud2::ConstPtr &msg) { StandardPCLCallBack(msg); });
-    }
+    // livox_ros_driver2 publishes sensor_msgs::PointCloud2, not CustomMsg
+    sub_pcl_ = nh.subscribe<sensor_msgs::PointCloud2>(
+        lidar_topic, 200000, [this](const sensor_msgs::PointCloud2::ConstPtr &msg) { StandardPCLCallBack(msg); });
 
     sub_imu_ = nh.subscribe<sensor_msgs::Imu>(imu_topic, 200000,
                                               [this](const sensor_msgs::Imu::ConstPtr &msg) { IMUCallBack(msg); });
@@ -548,6 +544,26 @@ void LaserMapping::MapIncremental() {
         "    IVox Add Points");
 }
 
+// ===== Z-axis Gravity Leveling =====
+// Returns the rotation that aligns current gravity estimate with world -Z.
+// Apply this rotation to the saved PCD point cloud for a level map (no EKF modification).
+common::M3D GetGravityLevelingRotation(state_ikfom &s) {
+    common::V3D grav_vec = s.grav.get_vect();
+    double grav_norm = grav_vec.norm();
+    if (grav_norm < 1e-6) return common::Eye3d;
+
+    common::V3D g_dir = grav_vec / grav_norm;
+    common::V3D g_target(0.0, 0.0, -1.0);
+
+    common::V3D rot_axis = g_dir.cross(g_target);
+    double sin_angle = rot_axis.norm();
+    if (sin_angle < 1e-5) return common::Eye3d;
+
+    rot_axis /= sin_angle;
+    double angle = std::asin(std::min(sin_angle, 1.0));
+    return Eigen::AngleAxisd(angle, rot_axis).toRotationMatrix();
+}
+
 /**
  * Lidar point cloud registration
  * will be called by the eskf custom observation model
@@ -749,6 +765,17 @@ void LaserMapping::PublishFrameWorld() {
             // std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/scans_") + std::to_string(pcd_index_) +
             //                            std::string(".pcd"));
             std::string all_points_dir(std::string("/home/shui/lite_cog/system/map/lite3") + std::string(".pcd"));
+
+            // Apply gravity leveling: rotate for level map
+            common::M3D R_level = GetGravityLevelingRotation(state_point_);
+            if (!R_level.isApprox(common::Eye3d)) {
+                for (auto &pt : pcl_wait_save_->points) {
+                    common::V3D p(pt.x, pt.y, pt.z);
+                    common::V3D p_leveled = R_level * p;
+                    pt.x = p_leveled.x(); pt.y = p_leveled.y(); pt.z = p_leveled.z();
+                }
+            }
+
             pcl::PCDWriter pcd_writer;
             LOG(INFO) << "current scan saved to /PCD/" << all_points_dir;
             pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_);
@@ -856,10 +883,19 @@ void LaserMapping::Finish() {
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
     if (pcl_wait_save_->size() > 0 && pcd_save_en_) {
-        // std::string file_name = std::string("scans.pcd");
-        // std::string all_points_dir(std::string(std::string(ROOT_DIR) + "PCD/") + file_name);
-        // std::string file_name = std::string("lite3.pcd");
-        std::string all_points_dir(std::string("/home/shui/lite_cog/system/map/lite3") + std::string(".pcd"));
+        std::string all_points_dir(std::string("/home/unitree/go2_nav/lite_cog/system/map/current.pcd"));
+
+        // Apply gravity leveling for a level final map
+        common::M3D R_level = GetGravityLevelingRotation(state_point_);
+        if (!R_level.isApprox(common::Eye3d)) {
+            for (auto &pt : pcl_wait_save_->points) {
+                common::V3D p(pt.x, pt.y, pt.z);
+                common::V3D p_leveled = R_level * p;
+                pt.x = p_leveled.x(); pt.y = p_leveled.y(); pt.z = p_leveled.z();
+            }
+            LOG(INFO) << "[GravityLevel] Final map leveled";
+        }
+
         pcl::PCDWriter pcd_writer;
         // LOG(INFO) << "current scan saved to /PCD/" << file_name;
         LOG(INFO) << "current scan saved to " << all_points_dir;

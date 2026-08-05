@@ -15,6 +15,8 @@ const btnStyle: React.CSSProperties = {
 export function MappingControl() {
   const { snapshot, runAction, token, refreshSnapshot } = useGatewayContext()
   const [errorText, setErrorText] = useState('')
+  const [stopDialogOpen, setStopDialogOpen] = useState(false)
+  const [stopSubmitting, setStopSubmitting] = useState(false)
   const runtime = snapshot?.runtime
 
   const execute = async (path: string, body?: object) => {
@@ -49,10 +51,7 @@ export function MappingControl() {
         </button>
         <button
           style={{ ...btnStyle, backgroundColor: '#f44336' }}
-          onClick={() => {
-            const save = window.confirm('确认停止建图？\n「确定」保存PCD并生成二维栅格地图\n「取消」仅停止不保存')
-            execute('/api/mapping/stop', { save })
-          }}
+          onClick={() => setStopDialogOpen(true)}
         >
           停止建图
         </button>
@@ -64,6 +63,72 @@ export function MappingControl() {
         </p>
       )}
       {errorText && <p style={{ color: '#e94560' }}>{errorText}</p>}
+      {stopDialogOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            background: 'rgba(0,0,0,0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mapping-stop-title"
+            style={{
+              width: 'min(440px, 100%)',
+              borderRadius: '12px',
+              background: '#202534',
+              color: 'white',
+              padding: '24px',
+              boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+            }}
+          >
+            <h3 id="mapping-stop-title" style={{ marginTop: 0 }}>结束建图</h3>
+            <p style={{ lineHeight: 1.6 }}>
+              是否保存当前点云，并生成二维栅格地图？地图转换可能需要几分钟。
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: '22px' }}>
+              <button
+                disabled={stopSubmitting}
+                style={{ ...btnStyle, backgroundColor: '#606778' }}
+                onClick={() => setStopDialogOpen(false)}
+              >
+                返回
+              </button>
+              <button
+                disabled={stopSubmitting}
+                style={{ ...btnStyle, backgroundColor: '#f44336' }}
+                onClick={async () => {
+                  setStopSubmitting(true)
+                  await execute('/api/mapping/stop', { save: false })
+                  setStopSubmitting(false)
+                  setStopDialogOpen(false)
+                }}
+              >
+                不保存结束
+              </button>
+              <button
+                disabled={stopSubmitting}
+                style={{ ...btnStyle, backgroundColor: '#4CAF50' }}
+                onClick={async () => {
+                  setStopSubmitting(true)
+                  await execute('/api/mapping/stop', { save: true })
+                  setStopSubmitting(false)
+                  setStopDialogOpen(false)
+                }}
+              >
+                {stopSubmitting ? '处理中…' : '保存并结束'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
