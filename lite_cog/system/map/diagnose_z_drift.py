@@ -9,7 +9,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import sys, os
 
-PCD_PATH = sys.argv[1] if len(sys.argv) > 1 else "/home/robot/go2_nav/lite_cog/system/map/scans_8/scans_8.pcd"
+PCD_PATH = sys.argv[1] if len(sys.argv) > 1 else "~/go2_nav/lite_cog/system/map/scans_8/scans_8.pcd"
 GRID_SIZE = 1.0
 GROUND_PERCENTILE = 5
 

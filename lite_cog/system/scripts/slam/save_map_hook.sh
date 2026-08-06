@@ -3,7 +3,7 @@
 # 用法: save_map_hook.sh <name>
 
 NAME="$1"
-MAP_DIR="/home/robot/go2_nav/lite_cog/system/map"
+MAP_DIR="$HOME/go2_nav/lite_cog/system/map"
 MAP_FOLDER="$MAP_DIR/$NAME"
 
 source /opt/ros/noetic/setup.bash 2>/dev/null

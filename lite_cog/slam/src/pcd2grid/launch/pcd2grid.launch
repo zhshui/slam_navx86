@@ -1,6 +1,6 @@
 <launch>
     <node pkg="octomap_server" type="my_octomap_node" name="my_octomap" output="screen">
-        <param name="file_path" value="/home/shui/LY/lite_cog/system/map/scans.pcd"/>
+        <param name="file_path" value="$(env HOME)/LY/lite_cog/system/map/scans.pcd"/>
         <param name="filter_leaf_size_m" value="0.1"/>
 
         <!-- <param name="map_file" value=""/> -->

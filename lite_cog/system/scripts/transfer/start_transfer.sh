@@ -1,4 +1,4 @@
-cd /home/shui/LY/lite_cog/transfer
+cd $HOME/LY/lite_cog/transfer
 source devel/setup.bash
 
 roslaunch message_transformer message_transformer.launch &

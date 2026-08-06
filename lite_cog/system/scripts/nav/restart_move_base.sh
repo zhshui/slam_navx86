@@ -3,7 +3,7 @@
 # Restart move_base only (keep hdl_localization alive)
 # Called by gateway when STVL params change
 # ============================================
-LOG_DIR="/home/unitree/go2_nav/lite_cog/system/scripts/nav/logs"
+LOG_DIR="$HOME/go2_nav/lite_cog/system/scripts/nav/logs"
 mkdir -p "$LOG_DIR"
 
 source /opt/ros/noetic/setup.bash

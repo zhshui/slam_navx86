@@ -4,6 +4,8 @@
 # Used as launch-prefix in navigation.launch
 # ============================================
 source /opt/ros/noetic/setup.bash
+# 重新加载 nav 工作空间，否则 ROS_PACKAGE_PATH 丢失导致 move_base 找不到 TEB 插件
+source "$HOME/go2_nav/lite_cog/nav/devel/setup.bash" 2>/dev/null || true
 
 MAX_WAIT=30
 

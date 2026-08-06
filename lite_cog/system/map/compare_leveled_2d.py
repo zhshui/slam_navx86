@@ -7,8 +7,8 @@ import struct, numpy as np, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-PCD_ORIG  = "/home/robot/go2_nav/lite_cog/system/map/scans_23/scans_23.pcd"
-PCD_LEVEL = "/home/robot/go2_nav/lite_cog/system/map/scans_23/scans_23_leveled.pcd"
+PCD_ORIG  = "~/go2_nav/lite_cog/system/map/scans_23/scans_23.pcd"
+PCD_LEVEL = "~/go2_nav/lite_cog/system/map/scans_23/scans_23_leveled.pcd"
 Z_MIN, Z_MAX = -0.1, 0.6
 TARGET_SAMPLE = 150000
 
@@ -96,7 +96,7 @@ def main():
     plt.suptitle('Ground flatness check — RANSAC leveled vs Original',
                  fontsize=14, fontweight='bold')
     plt.tight_layout()
-    out = '/home/robot/go2_nav/lite_cog/system/map/scans_23/compare_leveled_2d.png'
+    out = '~/go2_nav/lite_cog/system/map/scans_23/compare_leveled_2d.png'
     plt.savefig(out, dpi=200, bbox_inches='tight')
     print(f"\nSaved: {out}")
 

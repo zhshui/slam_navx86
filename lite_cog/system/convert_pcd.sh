@@ -6,7 +6,7 @@ if [ -z "$PCD_FILE" ] || [ ! -f "$PCD_FILE" ]; then
 fi
 
 source /opt/ros/noetic/setup.bash
-source /home/robot/go2_nav/lite_cog/slam/devel/setup.bash
+source $HOME/go2_nav/lite_cog/slam/devel/setup.bash
 
 export ROS_MASTER_URI=http://localhost:11312
 roscore -p 11312 &
@@ -15,7 +15,7 @@ sleep 2
 
 # Step 1: Level the PCD (correct ground tilt via RANSAC plane detection)
 # Overwrites the original with the leveled version — tilted PCD is not kept.
-LEVEL_PCD_BIN="/home/robot/go2_nav/lite_cog/system/tools/level_pcd"
+LEVEL_PCD_BIN="$HOME/go2_nav/lite_cog/system/tools/level_pcd"
 LEVELED_TMP="${PCD_FILE%.pcd}_tmp.pcd"
 
 if [ -x "$LEVEL_PCD_BIN" ]; then
@@ -36,6 +36,6 @@ wait $ROSCORE_PID 2>/dev/null
 
 # Sync new map to nav_web
 echo "[convert_pcd] Syncing maps to web..."
-bash /home/robot/go2_nav/lite_cog/system/scripts/slam/sync_maps_to_web.sh
+bash $HOME/go2_nav/lite_cog/system/scripts/slam/sync_maps_to_web.sh
 
 echo "[convert_pcd] Done"

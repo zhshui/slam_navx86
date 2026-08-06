@@ -19,7 +19,7 @@
   </node>
 
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
-        launch-prefix="/home/robot/go2_nav/lite_cog/system/scripts/nav/wait_for_deps.sh">
+        launch-prefix="$(env HOME)/go2_nav/lite_cog/system/scripts/nav/wait_for_deps.sh">
     <!-- global costmap -->
     <rosparam file="$(find navigation)/config/common_costmap_params.yaml" command="load" ns="global_costmap" /> 
     <rosparam file="$(find navigation)/config/global_costmap_params.yaml" command="load" ns="global_costmap" />     

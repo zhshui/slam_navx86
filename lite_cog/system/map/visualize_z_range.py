@@ -21,7 +21,7 @@ else:
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-PCD_PATH = "/home/shui/LY/lite_cog/system/map/scans.pcd"
+PCD_PATH = "~/LY/lite_cog/system/map/scans.pcd"
 Z_MIN = -0.1
 Z_MAX = 0.6
 TARGET_SAMPLE = 80000  # 目标采样点数
@@ -126,7 +126,7 @@ def main():
     ax.set_zlim(np.percentile(z, [0.5, 99.5]))
 
     plt.tight_layout()
-    out_path = "/home/shui/LY/lite_cog/system/map/scans_z_range.png"
+    out_path = "~/LY/lite_cog/system/map/scans_z_range.png"
     plt.savefig(out_path, dpi=150)
     print(f"\nPlot saved to {out_path}")
 

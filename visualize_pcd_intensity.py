@@ -104,7 +104,7 @@ def parse_pcd(filepath):
 
 
 def main():
-    filepath = sys.argv[1] if len(sys.argv) > 1 else "/home/robot/go2_nav/lite_cog/system/map/scans/scans_5.pcd"
+    filepath = sys.argv[1] if len(sys.argv) > 1 else "~/go2_nav/lite_cog/system/map/scans/scans_5.pcd"
     print(f"Reading: {filepath}")
 
     points_np, intensity = parse_pcd(filepath)

@@ -9,9 +9,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MAP_DIR="/home/robot/go2_nav/lite_cog/system/map"
+MAP_DIR="$HOME/go2_nav/lite_cog/system/map"
 ACTIVE_DIR="$MAP_DIR/active"
-GATEWAY_DIR="/home/robot/go2_nav/ros_web_gui_app/gateway"
+GATEWAY_DIR="$HOME/go2_nav/ros_web_gui_app/gateway"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 DB="$GATEWAY_DIR/data/nav_web.sqlite"
 SLAM_PROC_PATTERN="${MAP_STOP_PROC_PATTERN:-fastlio_mapping}"
@@ -19,7 +19,7 @@ TAG="[map_stop_hook]"
 
 echo "$TAG ====== 停止建图并转换栅格地图 ======"
 
-LEVEL_PCD="/home/robot/go2_nav/lite_cog/system/tools/level_pcd"
+LEVEL_PCD="$HOME/go2_nav/lite_cog/system/tools/level_pcd"
 
 # ---- 1. 停止 SLAM 进程 ----
 echo "$TAG 1/6 停止 SLAM 进程 (pattern: $SLAM_PROC_PATTERN) ..."
@@ -103,7 +103,7 @@ fi
 echo "$TAG 4/6 启动 pcd2grid 转换 ..."
 
 source /opt/ros/noetic/setup.bash
-source /home/robot/go2_nav/lite_cog/slam/devel/setup.bash
+source $HOME/go2_nav/lite_cog/slam/devel/setup.bash
 
 # 优先用现有 ROS master, 没有则临时起一个
 ROS_MASTER_PORT=11311
@@ -185,7 +185,7 @@ else
     echo "$TAG   WARNING: 未找到 PGM/YAML 输出文件"
 fi
 
-# ---- 6. 注册到数据库 ----
+# ---- 6. 注册到数据库 (使用 python3, sqlite3 可能未安装) ----
 echo "$TAG 6/6 注册到数据库 ..."
 
 if [ -f "$MAP_FOLDER/${MAP_NAME}.pgm" ] && [ -f "$MAP_FOLDER/${MAP_NAME}.yaml" ]; then
@@ -193,19 +193,19 @@ if [ -f "$MAP_FOLDER/${MAP_NAME}.pgm" ] && [ -f "$MAP_FOLDER/${MAP_NAME}.yaml" ]
     YAML_PATH="$MAP_FOLDER/${MAP_NAME}.yaml"
     PCD_PATH="$MAP_FOLDER/${MAP_NAME}.pcd"
 
-    if command -v sqlite3 &>/dev/null; then
-        EXISTS=$(sqlite3 "$DB" "SELECT id FROM maps WHERE name='$MAP_NAME';" 2>/dev/null || echo "")
-        if [ -z "$EXISTS" ]; then
-            ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-$RANDOM")
-            sqlite3 "$DB" "INSERT INTO maps (id, name, yaml_path, pcd_path, created_at, active) VALUES ('$ID', '$MAP_NAME', '$YAML_PATH', '$PCD_PATH', datetime('now'), 0);" 2>/dev/null || true
-            echo "$TAG   DB 新增: $MAP_NAME (folder: $MAP_FOLDER/)"
-        else
-            sqlite3 "$DB" "UPDATE maps SET yaml_path='$YAML_PATH', pcd_path='$PCD_PATH' WHERE id='$EXISTS';" 2>/dev/null || true
-            echo "$TAG   DB 更新: $MAP_NAME (folder: $MAP_FOLDER/)"
-        fi
-    else
-        echo "$TAG   WARNING: sqlite3 未安装, 跳过 DB 注册"
-    fi
+    ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s)-$RANDOM")
+    python3 -c "
+import sqlite3
+db = sqlite3.connect('$DB')
+row = db.execute(\"SELECT id FROM maps WHERE name='$MAP_NAME'\").fetchone()
+if row:
+    db.execute(\"UPDATE maps SET yaml_path='$YAML_PATH', pcd_path='$PCD_PATH' WHERE id=?\", (row[0],))
+    print('$TAG   DB 更新: $MAP_NAME (folder: $MAP_FOLDER/)')
+else:
+    db.execute(\"INSERT INTO maps (id, name, yaml_path, pcd_path, created_at, active) VALUES (?,'$MAP_NAME','$YAML_PATH','$PCD_PATH', datetime('now'), 0)\", ('$ID',))
+    print('$TAG   DB 新增: $MAP_NAME (folder: $MAP_FOLDER/)')
+db.commit()
+" 2>/dev/null || echo "$TAG   WARNING: DB 注册失败"
 fi
 
 echo "$TAG ====== 完成 ====="

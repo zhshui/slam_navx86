@@ -26,14 +26,14 @@
   <arg name="robot_odom_frame_id" value="odom" />
   <arg name="plot_estimation_errors" value="false" />
 
-  <node name="MapServer" pkg="map_server" type="map_server" args="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
+  <node name="MapServer" pkg="map_server" type="map_server" args="$(env HOME)/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
 
   <!-- in case you use velodyne_driver, comment out the following line -->
   <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
 
     <!-- globalmap_server_nodelet -->
     <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-      <param name="globalmap_pcd" value="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
+      <param name="globalmap_pcd" value="$(env HOME)/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
       <param name="convert_utm_to_local" value="true" />
       <param name="downsample_resolution" value="0.1" />
     </node>

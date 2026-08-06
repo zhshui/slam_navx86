@@ -76,7 +76,7 @@ def parse_pcd(filepath):
 
 
 def main():
-    filepath = sys.argv[1] if len(sys.argv) > 1 else "/home/robot/go2_nav/lite_cog/system/map/current.pcd"
+    filepath = sys.argv[1] if len(sys.argv) > 1 else "~/go2_nav/lite_cog/system/map/current.pcd"
     pts, intensity, fields = parse_pcd(filepath)
     print(f"File: {filepath}")
     print(f"Points: {pts.shape[0]}, Fields: {fields}")

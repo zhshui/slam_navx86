@@ -6,7 +6,7 @@ read COMMAND
 case "$COMMAND" in
     "1")
         echo "YYYYYY"
-	source /home/robot/go2_nav/lite_cog/slam/devel/setup.bash;
+	source $HOME/go2_nav/lite_cog/slam/devel/setup.bash;
 	roslaunch pcd2grid pcd2grid.launch
         ;;
     *)

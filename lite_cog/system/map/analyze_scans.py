@@ -40,7 +40,7 @@ def sample_xyz(filepath, h, max_n=500000):
                 zs.append(struct.unpack_from('f', raw, oz + b)[0])
     return np.array(xs), np.array(ys), np.array(zs)
 
-base = "/home/robot/go2_nav/lite_cog/system/map"
+base = "~/go2_nav/lite_cog/system/map"
 
 # =========================================================================
 # Part 1: scans_4 整体结构分析

@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-PCD_PATH = "/home/shui/LY/lite_cog/system/map/scans.pcd"
+PCD_PATH = "~/LY/lite_cog/system/map/scans.pcd"
 Z_MIN, Z_MAX = -0.1, 0.6
 TARGET_SAMPLE = 100000
 
@@ -94,7 +94,7 @@ def main():
     ax2.set_aspect('equal'); ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    out_path = "/home/shui/LY/lite_cog/system/map/scans_z_range_2d.png"
+    out_path = "~/LY/lite_cog/system/map/scans_z_range_2d.png"
     plt.savefig(out_path, dpi=150)
     print(f"Saved to {out_path}")
 

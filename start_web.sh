@@ -119,7 +119,7 @@ fi
 
 # 3. gateway (tsx without watch — avoids EADDRINUSE on restart)
 echo "[startup] 3/5 启动 gateway ..."
-cd /home/unitree/go2_nav/ros_web_gui_app/gateway
+cd $HOME/go2_nav/ros_web_gui_app/gateway
 ( exec 9>&- ; ROS_MODE=rosbridge npx tsx src/index.ts ) &>"$LOG_DIR/gateway.log" &
 sleep 2
 
@@ -137,7 +137,7 @@ fi
 
 # 4. vite
 echo "[startup] 4/5 启动 vite ..."
-cd /home/unitree/go2_nav/ros_web_gui_app
+cd $HOME/go2_nav/ros_web_gui_app
 ( exec 9>&- ; npm run dev ) &>"$LOG_DIR/vite.log" &
 sleep 2
 
