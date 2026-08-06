@@ -19,7 +19,7 @@ export function ConnectionPage({ onConnect, onGatewayMode, hideGatewayButton }: 
   });
   const [port, setPort] = useState(() => {
     const preferences = loadConnectionPreferences();
-    return preferences?.port || '9090';
+    return preferences?.port || '9091';
   });
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export function ConnectionPage({ onConnect, onGatewayMode, hideGatewayButton }: 
             type="text"
             value={port}
             onChange={(e) => setPort(e.target.value)}
-            placeholder="9090"
+            placeholder="9091"
             disabled={connecting}
           />
         </div>
