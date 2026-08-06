@@ -37,4 +37,11 @@
     <!-- move base -->
     <rosparam file="$(find navigation)/config/move_base_params.yaml" command="load"/>
   </node>
+
+  <!-- 替换 A* 原始折线为平滑路径: Douglas-Peucker + B样条 -->
+  <node pkg="navigation" type="path_smoother.py" name="path_smoother" output="screen">
+    <param name="simplify_tolerance" value="0.15" />
+    <param name="smooth_step" value="0.05" />
+  </node>
+
 </launch>

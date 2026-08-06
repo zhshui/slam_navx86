@@ -15,13 +15,13 @@ preprocess:
     crop_body_max: [ 0.8,  0.35,  0.05]  # [x, y, z] max corner in LiDAR frame (m)
 
 mapping:
-    det_range: 20.0
+    det_range: 20.0             # 扫描距离 默认300m
     fov_degree: 360.0            # MID360 has 360 degree horizontal FOV
     gyr_cov: 0.1
     acc_cov: 0.1
     b_gyr_cov: 0.001
     b_acc_cov: 0.001
-    extrinsic_est_en: false
+    extrinsic_est_en: true
     extrinsic_T: [0.0, 0.0, 0.0]
     extrinsic_R: [0.9659, 0, -0.2588,
                   0,      1, 0,

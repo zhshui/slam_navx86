@@ -1,7 +1,7 @@
 <launch>
 
     <!-- network interface arg with default -->
-    <arg name="nic" default="eth0" />
+    <arg name="nic" default="enp171s0" />
     <arg name="enable_teleop" default="false" />
 
     <!-- 2. 启动刚才编译生成的二进制节点 -->

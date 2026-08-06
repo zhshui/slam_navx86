@@ -93,6 +93,11 @@ if(ROS_EDITION STREQUAL "ROS1")
   ## make sure the livox_lidar_sdk_static library is installed
   find_library(LIVOX_LIDAR_SDK_LIBRARY  liblivox_lidar_sdk_static.a    /usr/local/lib)
 
+  ## find livox sdk include directory
+  find_path(LIVOX_LIDAR_SDK_INCLUDE_DIR
+    NAMES "livox_lidar_api.h" "livox_lidar_def.h"
+    PATHS /usr/local/include ${CMAKE_SOURCE_DIR}/../Livox-SDK2/install/include)
+
   ## PCL library
   link_directories(${PCL_LIBRARY_DIRS})
   add_definitions(${PCL_DEFINITIONS})
@@ -149,6 +154,7 @@ if(ROS_EDITION STREQUAL "ROS1")
     ${catkin_INCLUDE_DIRS}
     ${PCL_INCLUDE_DIRS}
     ${APR_INCLUDE_DIRS}
+    ${LIVOX_LIDAR_SDK_INCLUDE_DIR}
     3rdparty
     src
   )
