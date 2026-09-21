@@ -15,7 +15,7 @@ TebLocalPlannerROS:
   max_samples: 100
   global_plan_overwrite_orientation: false # 关掉=让TEB自己优化朝向，靠nh约束自然对齐
   allow_init_with_backwards_motion: false
-  global_plan_viapoint_sep: 0.15  # 默认0.3，减半=途经点更密，朝向跟随更精细
+  global_plan_viapoint_sep: 0.05  # 途经点极密=强力锁定全局路径
   via_points_ordered: false
   max_global_plan_lookahead_dist: 5.0
   global_plan_prune_distance: 0.5
@@ -64,11 +64,11 @@ TebLocalPlannerROS:
   costmap_obstacles_behind_robot_dist: 2.0
   obstacle_poses_affected: 10
   legacy_obstacle_association: false
-  obstacle_association_force_inclusion_factor: 3 
+  obstacle_association_force_inclusion_factor: 3
   obstacle_association_cutoff_factor: 10
   costmap_converter_plugin: "costmap_converter::CostmapToPolygonsDBSMCCH"
-  costmap_converter: 
-    CostmapToPolygonsDBSMCCH: 
+  costmap_converter:
+    CostmapToPolygonsDBSMCCH:
       cluster_max_distance: 0.3
       cluster_max_pts: 30
       cluster_min_pts: 3
@@ -79,8 +79,8 @@ TebLocalPlannerROS:
   obstacle_proximity_upper_bound: 0.6
 
   # Optimization
-  no_inner_iterations: 10
-  no_outer_iterations: 8
+  no_inner_iterations: 15
+  no_outer_iterations: 12
   optimization_activate: true
   # optimization_verbose: false
   penalty_epsilon: 0.05      #default 0.05
@@ -94,13 +94,13 @@ TebLocalPlannerROS:
   weight_kinematics_forward_drive: 100  #禁止倒退（越大越排斥，走不了就转圈）
   weight_kinematics_turning_radius: 0 #default 1
   weight_optimaltime: 1
-  weight_shortest_path: 9  #default 0
-  # weight_obstacle: 50
-  # weight_inflation: 0.1
-  # weight_dynamic_obstacle: 50
-  # weight_dynamic_obstacle_inflation: 0.1
+  weight_shortest_path: 50  #default 0（极大=强力贴合全局路径，拒绝任何绕路）
+  weight_obstacle: 50
+  weight_inflation: 0.1
+  weight_dynamic_obstacle: 50
+  weight_dynamic_obstacle_inflation: 0.1
   # weight_velocity_obstacle_ratio: 0
-  weight_viapoint: 10        #default 1（增大=更紧密跟随全局路径，包括朝向）
+  weight_viapoint: 50        #default 1（极大=几乎锁死在全局路径途经点上）
   weight_prefer_rotdir: 50   #default 50
   # weight_adapt_factor: 2
   # obstacle_cost_exponent: 1

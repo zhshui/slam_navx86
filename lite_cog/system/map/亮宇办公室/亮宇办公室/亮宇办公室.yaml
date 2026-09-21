@@ -1,6 +1,6 @@
-image: scans_9.pgm
+image: 亮宇办公室.pgm
 resolution: 0.05
-origin: [-2.24118, -5.40932, 0.0]
+origin: [-7.25296, -15.9751, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196

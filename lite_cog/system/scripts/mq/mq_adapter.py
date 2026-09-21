@@ -18,6 +18,9 @@ from std_msgs.msg import String as RosString
 from sensor_msgs.msg import PointCloud2
 from actionlib_msgs.msg import GoalStatusArray
 
+from route_geometry import build_route_fingerprint, build_route_geometry
+from route_ref_tracker import RouteRefTracker
+
 # ====== 默认环境变量（可通过 export 覆盖） ======
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # mq_adapter.py → mq/ → scripts/ → system/ → lite_cog/ → go2_nav/
@@ -30,7 +33,7 @@ MQ_USER = os.environ.get("MQ_USER", "server")
 MQ_PASS = os.environ.get("MQ_PASS", "5bP!8aS3$kD7vF2&")
 MQ_VHOST = os.environ.get("MQ_VHOST", "/")
 MQ_EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
-MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D4000Q3K87FG1")
+MQ_CLIENT_ID = os.environ.get("MQ_CLIENT_ID", "B42D1000P3499GGW")
 GATEWAY_DIR = os.environ.get("GATEWAY_DIR", os.path.join(NAV_ROOT, "ros_web_gui_app/gateway"))
 DB_PATH = os.path.join(GATEWAY_DIR, "data", "nav_web.sqlite")
 SWITCH_HOOK = os.environ.get("MAP_SWITCH_HOOK", os.path.join(NAV_ROOT, "lite_cog/system/scripts/slam/switch_map_hook.sh"))
@@ -194,6 +197,7 @@ class NavState:
     def __init__(self):
         self.lock = threading.Lock()
         self.current_map = ""; self.last_goal = None; self.task_proc = None
+        self.route_ref = RouteRefTracker()
     def to_dict(self):
         with self.lock:
             return {"current_map": self.current_map}
@@ -290,10 +294,17 @@ def h_switch_map(body, ref):
     _ack(ref, "switch_map", "accepted")
     rospy.loginfo(f"[MQ] switch_map: {mid}")
 
-def h_nav_single(body, ref):
+def h_nav_single(body, ref, attach_route_ref=True):
     g = body.get("goal", {})
     x, y, yaw = g.get("x"), g.get("y"), g.get("yaw")
-    if x is None: _ack(ref, "nav_single", "rejected", "need x/y/yaw"); return
+    if x is None or y is None or yaw is None:
+        _ack(ref, "nav_single", "rejected", "need x/y/yaw")
+        return
+    try:
+        x, y, yaw = float(x), float(y), float(yaw)
+    except (TypeError, ValueError):
+        _ack(ref, "nav_single", "rejected", "goal x/y/yaw must be numbers")
+        return
     mid = body.get("map_id", "")
     if mid: _switch_and_init(mid)
     # 启动雷达 + 运控（等价于按下 Web 端按钮），gateway 已做幂等保护
@@ -320,11 +331,21 @@ def h_nav_single(body, ref):
     if not ready:
         rospy.logwarn("[MQ] move_base not ready after 60s, sending goal anyway")
 
-    ok, msg = _call_gateway("/api/nav/simple-goal", {"x": float(x), "y": float(y), "yaw": float(yaw), "frame_id": "map"})
-    rospy.loginfo(f"[MQ] simple-goal via gateway: ok={ok} x={x} y={y} yaw={yaw}")
-    mq_publish("nav_points", {"header": _hdr("nav_points"),
-        "body": {"points": [{"id": "goal", "x": float(x), "y": float(y), "yaw": float(yaw)}]}})
+    # ACK must enter the MQ publish queue before the goal can trigger a global route.
     _ack(ref, "nav_single", "accepted")
+    if attach_route_ref:
+        state.route_ref.arm(ref, x, y)
+    else:
+        state.route_ref.clear()
+    try:
+        ok, msg = _call_gateway("/api/nav/simple-goal",
+                                {"x": x, "y": y, "yaw": yaw, "frame_id": "map"})
+        rospy.loginfo(f"[MQ] simple-goal via gateway: ok={ok} x={x} y={y} yaw={yaw}")
+        mq_publish("nav_points", {"header": _hdr("nav_points"),
+            "body": {"points": [{"id": "goal", "x": x, "y": y, "yaw": yaw}]}})
+    except Exception as e:
+        state.route_ref.clear()
+        rospy.logerr(f"[MQ] nav_single dispatch failed after accepted ACK: {e}")
 
 def h_nav_goal(body, ref):
     """单独发送单点导航目标 — 直接发给 move_base，不切换地图、不走 gateway 编排"""
@@ -333,21 +354,35 @@ def h_nav_goal(body, ref):
     if x is None or y is None or yaw is None:
         _ack(ref, "nav_goal", "rejected", "need goal.x, goal.y, goal.yaw")
         return
-    # 直接发给 move_base（不切换地图、不等 nav stack）
-    frame = g.get("frame_id", "map")
-    mb.send(float(x), float(y), float(yaw), frame=str(frame))
-    # 通知 gateway 更新 Web 端目标点显示（broadcast nav_goal 事件）
-    ok, _ = _call_gateway("/api/nav/simple-goal", {"x": float(x), "y": float(y), "yaw": float(yaw), "frame_id": str(frame)})
-    rospy.loginfo(f"[MQ] nav_goal: x={x}, y={y}, yaw={yaw}, frame={frame}, web_broadcast={ok}")
-    mq_publish("nav_points", {"header": _hdr("nav_points"),
-        "body": {"points": [{"id": "goal", "x": float(x), "y": float(y), "yaw": float(yaw)}]}})
-    with state.lock: state.last_goal = body
-    pub.reset_pose_history()
-    # 标记"暂停后恢复"，使 Publisher 在 gateway 状态仍为 paused 时也计算实际运动状态
-    pub._resumed_after_pause = True
+    try:
+        x, y, yaw = float(x), float(y), float(yaw)
+    except (TypeError, ValueError):
+        _ack(ref, "nav_goal", "rejected", "goal x/y/yaw must be numbers")
+        return
+    frame = str(g.get("frame_id", "map"))
+    # ACK must enter the MQ publish queue before the goal can trigger a global route.
     _ack(ref, "nav_goal", "accepted")
+    # 在发送目标前记录指令 ID，仅供该目标第一条全局路径消费。
+    state.route_ref.arm(ref, x, y)
+    try:
+        # 直接发给 move_base（不切换地图、不等 nav stack）
+        mb.send(x, y, yaw, frame=frame)
+        # 通知 gateway 更新 Web 端目标点显示（broadcast nav_goal 事件）
+        ok, _ = _call_gateway("/api/nav/simple-goal",
+                              {"x": x, "y": y, "yaw": yaw, "frame_id": frame})
+        rospy.loginfo(f"[MQ] nav_goal: x={x}, y={y}, yaw={yaw}, frame={frame}, web_broadcast={ok}")
+        mq_publish("nav_points", {"header": _hdr("nav_points"),
+            "body": {"points": [{"id": "goal", "x": x, "y": y, "yaw": yaw}]}})
+        with state.lock: state.last_goal = body
+        pub.reset_pose_history()
+        # 标记"暂停后恢复"，使 Publisher 在 gateway 状态仍为 paused 时也计算实际运动状态
+        pub._resumed_after_pause = True
+    except Exception as e:
+        state.route_ref.clear()
+        rospy.logerr(f"[MQ] nav_goal dispatch failed after accepted ACK: {e}")
 
 def h_nav_multi(body, ref):
+    state.route_ref.clear()
     wps = body.get("waypoints", [])
     if not wps: _ack(ref, "nav_multi", "rejected", "need waypoints"); return
     mid = body.get("map_id", "")
@@ -383,6 +418,7 @@ def h_nav_cancel(body, ref):
     mb.cancel()
     _gateway_nav_cmd("stop")
     state.last_goal = None
+    state.route_ref.clear()
     mb = MBClient()
     pub._resumed_after_pause = False  # 清除暂停恢复标记
     _ack(ref, "nav_cancel", "accepted")
@@ -390,7 +426,7 @@ def h_nav_cancel(body, ref):
 def h_nav_resume(body, ref):
     if state.last_goal:
         _gateway_nav_cmd("resume")
-        h_nav_single(state.last_goal, ref)
+        h_nav_single(state.last_goal, ref, attach_route_ref=False)
     else: _ack(ref, "nav_resume", "rejected", "no previous goal")
 
 def h_relocalize(body, ref):
@@ -612,6 +648,7 @@ class Publisher:
             [m.pose.orientation.x, m.pose.orientation.y,
              m.pose.orientation.z, m.pose.orientation.w])
         self._last_simple_goal = (m.pose.position.x, m.pose.position.y, yaw)
+        state.route_ref.observe_goal(m.pose.position.x, m.pose.position.y)
         # 有新的 simple_goal 意味着新导航开始，重置到达状态
         self._has_arrived = False
         self._last_arrived_goal_pos = None
@@ -1044,43 +1081,55 @@ class Publisher:
                     self._last_status_force = now
             except: pass
             try:
-                if self.last_plan and self.last_plan.poses:
-                    # 只在路径变化时发布 route（比较路径长度+首尾坐标）
-                    route_key = (len(self.last_plan.poses),
-                                 self.last_plan.poses[0].pose.position.x,
-                                 self.last_plan.poses[0].pose.position.y,
-                                 self.last_plan.poses[-1].pose.position.x,
-                                 self.last_plan.poses[-1].pose.position.y)
-                    route_hash = hash(route_key)
-                    if route_hash != self._last_route_hash:
-                        self._last_route_hash = route_hash
-                        pts_raw = [{"x":p.pose.position.x,"y":p.pose.position.y} for p in self.last_plan.poses[:200]]
-                        # 计算路径长度
-                        path_len = 0.0
-                        for i in range(1, len(pts_raw)):
-                            dx = pts_raw[i]["x"] - pts_raw[i-1]["x"]
-                            dy = pts_raw[i]["y"] - pts_raw[i-1]["y"]
-                            path_len += (dx*dx + dy*dy) ** 0.5
-                        # source: 当前位置, target: 最后目标点
-                        source = {"x": 0.0, "y": 0.0, "yaw": 0.0}
-                        target = {"x": 0.0, "y": 0.0, "yaw": 0.0}
-                        try:
-                            pos, ori = self.tf_listener.lookupTransform(TF_MAP_FRAME, TF_BODY_FRAME, rospy.Time(0))
-                            _, _, yaw = tf.transformations.euler_from_quaternion([ori[0],ori[1],ori[2],ori[3]])
-                            source = {"x": round(pos[0], 3), "y": round(pos[1], 3), "yaw": round(yaw, 4)}
-                        except: pass
-                        lg = state.last_goal
-                        if lg:
-                            g = lg.get("goal", {})
-                            target = {"x": float(g.get("x", 0)), "y": float(g.get("y", 0)), "yaw": float(g.get("yaw", 0))}
-                        else:
-                            # 非 MQ 发起的导航（如 Web 端），fallback 到规划路径实际终点
-                            ep = self.last_plan.poses[-1].pose
-                            target = {"x": round(ep.position.x, 3), "y": round(ep.position.y, 3), "yaw": 0.0}
-                        self._publish("route", {"header": _hdr("nav_route"),
-                            "body": {"route_id": str(uuid.uuid4()), "source": source, "target": target,
-                                     "path": pts_raw, "path_length": round(path_len, 2)}})
-            except: pass
+                plan = self.last_plan
+                if plan and plan.poses:
+                    geometry = build_route_geometry([
+                        (pose.pose.position.x, pose.pose.position.y)
+                        for pose in plan.poses
+                    ])
+                    first_pose = plan.poses[0].pose
+                    last_pose = plan.poses[-1].pose
+                    _, _, source_yaw = tf.transformations.euler_from_quaternion([
+                        first_pose.orientation.x, first_pose.orientation.y,
+                        first_pose.orientation.z, first_pose.orientation.w,
+                    ])
+                    _, _, target_yaw = tf.transformations.euler_from_quaternion([
+                        last_pose.orientation.x, last_pose.orientation.y,
+                        last_pose.orientation.z, last_pose.orientation.w,
+                    ])
+                    frame_id = plan.header.frame_id or TF_MAP_FRAME
+                    route_fingerprint = build_route_fingerprint(
+                        geometry["fingerprint"], frame_id, source_yaw, target_yaw)
+                    if route_fingerprint != self._last_route_hash:
+                        source = {
+                            "x": geometry["path"][0]["x"],
+                            "y": geometry["path"][0]["y"],
+                            "yaw": round(source_yaw, 4),
+                        }
+                        target = {
+                            "x": geometry["path"][-1]["x"],
+                            "y": geometry["path"][-1]["y"],
+                            "yaw": round(target_yaw, 4),
+                        }
+                        route_body = {
+                            "route_id": str(uuid.uuid4()),
+                            "frame_id": frame_id,
+                            "source": source,
+                            "target": target,
+                            "path": geometry["path"],
+                            "path_length": round(geometry["path_length"], 2),
+                        }
+                        route_ref = state.route_ref.consume_for_route(
+                            last_pose.position.x, last_pose.position.y)
+                        if route_ref:
+                            route_body["ref_cmd_id"] = route_ref
+                        self._publish("route", {
+                            "header": _hdr("nav_route"),
+                            "body": route_body,
+                        })
+                        self._last_route_hash = route_fingerprint
+            except Exception as e:
+                rospy.logwarn_throttle(5.0, f"[MQ] invalid global route, not publishing: {e}")
             # === 局部路径 (TEB local plan) ===
             try:
                 if self.last_local_plan and self.last_local_plan.poses:

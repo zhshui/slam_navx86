@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-path_smoother.py — A* 全局路径平滑节点
+path_smoother.py — A* 全局路径平滑节点（带碰撞检测）
 
 订阅 /move_base/GlobalPlanner/plan (A* 输出的栅格折线)
-  → Douglas-Peucker 简化关键点
-  → 三次 Clamped B样条插值平滑
-  → 发布 /move_base/GlobalPlanner/plan_smooth
+  → Douglas-Peucker 简化关键点 (costmap 碰撞验证)
+  → 三次 Clamped B样条插值平滑 (costmap 碰撞验证)
+  → 发布 /move_base/GlobalPlanner/plan
 
 纯 numpy 实现，不依赖 scipy。
 """
@@ -13,7 +13,7 @@ path_smoother.py — A* 全局路径平滑节点
 import math
 import numpy as np
 import rospy
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path, OccupancyGrid
 from geometry_msgs.msg import PoseStamped
 
 
@@ -181,8 +181,55 @@ def compute_path_length(xy):
     return float(np.sum(np.linalg.norm(np.diff(xy, axis=0), axis=1)))
 
 
-def xy_length(xy1, xy2):
-    return float(np.linalg.norm(xy1 - xy2))
+# ============================================================
+#  碰撞检测辅助函数
+# ============================================================
+
+def _sample_segment(p1, p2, step):
+    """沿线段 p1→p2 以 step (m) 为步长均匀采样，包含两端点"""
+    dist = float(np.linalg.norm(p2 - p1))
+    if dist < 1e-9:
+        return np.array([p1])
+    n = max(2, int(np.ceil(dist / step)) + 1)
+    t = np.linspace(0, 1, n)
+    return p1 + t[:, None] * (p2 - p1)
+
+
+def _check_collision(points, costmap, origin, resolution, width, height, cost_threshold):
+    """检查一组点是否与障碍物碰撞
+
+    Args:
+        points:         (K, 2) 世界坐标点
+        costmap:        一维 costmap 数据 (row-major, gy * width + gx)
+        origin:         (ox, oy) costmap 原点世界坐标
+        resolution:     分辨率 m/cell
+        width, height:  costmap 尺寸
+        cost_threshold: cost >= 此值视为障碍 (unknown=-1 也视为障碍)
+
+    Returns:
+        collision: bool 数组, length=K, True=碰撞
+    """
+    # world → grid
+    gx = np.floor((points[:, 0] - origin[0]) / resolution).astype(int)
+    gy = np.floor((points[:, 1] - origin[1]) / resolution).astype(int)
+
+    # 越界检查
+    valid = (gx >= 0) & (gx < width) & (gy >= 0) & (gy < height)
+
+    collision = np.zeros(len(points), dtype=bool)
+
+    for i in range(len(points)):
+        if valid[i]:
+            idx = gy[i] * width + gx[i]
+            c = costmap[idx]
+            # unknown (-1) 或 cost >= threshold 均视为障碍
+            if c < 0 or c >= cost_threshold:
+                collision[i] = True
+        else:
+            # 越界视作碰撞
+            collision[i] = True
+
+    return collision
 
 
 # ============================================================
@@ -193,15 +240,35 @@ class PathSmoother:
     def __init__(self):
         rospy.init_node('path_smoother', anonymous=False)
 
-        # 参数
+        # 平滑参数
         self.simplify_tolerance = rospy.get_param('~simplify_tolerance', 0.15)
         self.smooth_step = rospy.get_param('~smooth_step', 0.05)
         self.smooth_order = rospy.get_param('~smooth_order', 3)
 
-        rospy.loginfo(f'[path_smoother] simplify_tolerance={self.simplify_tolerance}m, '
-                      f'smooth_step={self.smooth_step}m, order={self.smooth_order}')
+        # 碰撞检测参数
+        self.collision_check = rospy.get_param('~collision_check', True)
+        self.cost_threshold = rospy.get_param('~cost_threshold', 100)  # >=100 视为障碍 (inscribed=253, lethal=254)
+        self.validation_step = rospy.get_param('~validation_step', 0.05)  # 碰撞检测采样步长 (米)
 
-        # 订阅 raw plan → 平滑后发布回同 topic 替换原始路径
+        # 防回环: 如果平均点间距小于此值，说明已被平滑处理，跳过
+        self.min_avg_spacing = rospy.get_param('~min_avg_spacing', self.smooth_step * 2.0)
+
+        rospy.loginfo(f'[path_smoother] simplify_tolerance={self.simplify_tolerance}m, '
+                      f'smooth_step={self.smooth_step}m, order={self.smooth_order}, '
+                      f'collision_check={self.collision_check}, cost_threshold={self.cost_threshold}, '
+                      f'validation_step={self.validation_step}m')
+
+        # costmap 缓存
+        self.costmap = None
+        self.costmap_info = None
+
+        if self.collision_check:
+            self.costmap_sub = rospy.Subscriber(
+                '/move_base/global_costmap/costmap', OccupancyGrid,
+                self.costmap_callback, queue_size=1)
+            rospy.loginfo('[path_smoother] Subscribed to /move_base/global_costmap/costmap')
+
+        # 订阅 raw plan → 平滑后发布
         self.plan_sub = rospy.Subscriber(
             '/move_base/GlobalPlanner/plan', Path,
             self.plan_callback, queue_size=1)
@@ -209,6 +276,116 @@ class PathSmoother:
             '/move_base/GlobalPlanner/plan', Path, queue_size=1)
 
         rospy.loginfo('[path_smoother] Ready — smoothing /move_base/GlobalPlanner/plan in-place')
+
+    # ── costmap ─────────────────────────────────────────────
+
+    def costmap_callback(self, msg):
+        """缓存最新的 global costmap"""
+        self.costmap = np.array(msg.data, dtype=np.int8).reshape(msg.info.height, msg.info.width)
+        self.costmap_info = {
+            'origin': (msg.info.origin.position.x, msg.info.origin.position.y),
+            'resolution': msg.info.resolution,
+            'width': msg.info.width,
+            'height': msg.info.height,
+        }
+
+    def _costmap_ready(self):
+        return self.costmap is not None and self.costmap_info is not None
+
+    # ── 碰撞检测 ────────────────────────────────────────────
+
+    def _validate_segment(self, p1, p2):
+        """验证线段 p1→p2 是否无碰撞 (对线段采样后逐点查询 costmap)
+
+        Returns:
+            True  线段安全 (所有采样点 cost < threshold 且不是 unknown)
+            False 线段穿过障碍物或 unknown 区域
+        """
+        if not self._costmap_ready():
+            return True  # costmap 未就绪时不拦截
+
+        samples = _sample_segment(p1, p2, self.validation_step)
+        collision = _check_collision(
+            samples, self.costmap,
+            self.costmap_info['origin'],
+            self.costmap_info['resolution'],
+            self.costmap_info['width'],
+            self.costmap_info['height'],
+            self.cost_threshold)
+        return not np.any(collision)
+
+    def _validate_path(self, xy):
+        """验证整条路径是否无碰撞
+
+        Returns:
+            (True, -1)     路径安全
+            (False, index) 第一个碰撞点在 xy 中的索引
+        """
+        if not self._costmap_ready() or len(xy) < 1:
+            return True, -1
+
+        collision = _check_collision(
+            xy, self.costmap,
+            self.costmap_info['origin'],
+            self.costmap_info['resolution'],
+            self.costmap_info['width'],
+            self.costmap_info['height'],
+            self.cost_threshold)
+        collided_indices = np.where(collision)[0]
+        if len(collided_indices) > 0:
+            return False, int(collided_indices[0])
+        return True, -1
+
+    # ── 安全 RDP 简化 ──────────────────────────────────────
+
+    def _rdp_simplify_safe(self, raw_xy, eps):
+        """带碰撞检测的 RDP 简化
+
+        先执行标准 RDP 得到候选简化点，然后逐段检查：
+        - 如果简化段无碰撞 → 接受简化
+        - 如果简化段穿过障碍物 → 保留该段原始 A* 点中每隔一定间距的关键点
+
+        这样在空旷区域获得充分简化，在障碍物附近保持安全精度。
+        """
+        simplified = rdp_simplify(raw_xy, eps)
+
+        if not self.collision_check or not self._costmap_ready():
+            return simplified
+
+        # 建立 simplified → raw_xy 索引映射
+        # RDP 返回的点来自输入数组的逐元素 copy，值完全相同
+        simp_indices = _match_points(simplified, raw_xy)
+
+        # 逐段验证并修复
+        safe_points = [simplified[0]]
+        collisions_fixed = 0
+
+        for i in range(len(simplified) - 1):
+            p1 = simplified[i]
+            p2 = simplified[i + 1]
+            idx1 = simp_indices[i]
+            idx2 = simp_indices[i + 1]
+
+            if self._validate_segment(p1, p2):
+                safe_points.append(p2)
+            else:
+                # 该简化段碰撞 → 从原始 A* 路径插入中间点
+                collisions_fixed += 1
+                sub_pts = raw_xy[idx1 + 1:idx2]  # 原始 A* 点 (不含两端)
+                if len(sub_pts) > 0:
+                    # 降采样：每隔约 0.5m 保留一个点，避免过度密集
+                    skip = max(1, int(0.5 / max(self.validation_step, 0.01)))
+                    safe_points.extend(sub_pts[::skip].tolist())
+                safe_points.append(p2)
+
+        if collisions_fixed > 0:
+            rospy.loginfo_throttle(5.0,
+                f'[path_smoother] RDP: fixed {collisions_fixed} colliding segment(s) '
+                f'→ {len(safe_points)} safe control points')
+
+        return np.array(safe_points)
+
+    # ── 主回调 ─────────────────────────────────────────────
 
     def plan_callback(self, msg):
         if not msg.poses:
@@ -224,14 +401,14 @@ class PathSmoother:
             self.smooth_pub.publish(msg)
             return
 
-        # 防回环: 如果点已经够密 (平均间距 < smooth_step*2)，说明已被平滑过，跳过
+        # 防回环: 如果点已经够密，说明已被平滑过，跳过
         if n_raw >= 2 and raw_length > 0:
             avg_spacing = raw_length / (n_raw - 1)
-            if avg_spacing < self.smooth_step * 2.0:
+            if avg_spacing < self.min_avg_spacing:
                 return  # 已是平滑路径，不重复处理
 
-        # ── Step 1: RDP 简化 ──
-        simplified = rdp_simplify(raw_xy, self.simplify_tolerance)
+        # ── Step 1: RDP 简化（带 costmap 碰撞验证）──
+        simplified = self._rdp_simplify_safe(raw_xy, self.simplify_tolerance)
         n_simple = len(simplified)
 
         # ── Step 2: B样条插值 ──
@@ -241,7 +418,28 @@ class PathSmoother:
             n_samples = n_raw
 
         if n_simple >= self.smooth_order + 1 and n_simple >= 3:
-            smoothed = bspline_interpolate(simplified, n_samples, order=min(self.smooth_order, n_simple - 1))
+            smooth_order = min(self.smooth_order, n_simple - 1)
+            smoothed = bspline_interpolate(simplified, n_samples, order=smooth_order)
+
+            # ── Step 3: 碰撞检测 (验证 B样条曲线) ──
+            if self.collision_check and self._costmap_ready():
+                safe, collision_idx = self._validate_path(smoothed)
+                if not safe:
+                    rospy.logwarn_throttle(3.0,
+                        f'[path_smoother] B-spline collides at idx={collision_idx}, '
+                        f'falling back to linear interpolation on validated control points')
+                    # 回退: 对已验证安全的简化控制点做线性插值
+                    # 控制点的每个相邻段都通过了 _validate_segment，线性插值不会出界
+                    n_fallback = max(n_raw, int(compute_path_length(simplified) / self.smooth_step))
+                    if len(simplified) >= 2:
+                        t_orig = np.linspace(0, 1, len(simplified))
+                        t_new = np.linspace(0, 1, n_fallback)
+                        smoothed = np.column_stack([
+                            np.interp(t_new, t_orig, simplified[:, 0]),
+                            np.interp(t_new, t_orig, simplified[:, 1])
+                        ])
+                    else:
+                        smoothed = simplified
         else:
             smoothed = simplified
 
@@ -261,6 +459,28 @@ class PathSmoother:
 
     def run(self):
         rospy.spin()
+
+
+# ============================================================
+#  工具函数
+# ============================================================
+
+def _match_points(query, reference):
+    """将 query 中每行匹配到 reference 中最近邻的索引
+
+    因为 RDP 返回的点是 reference 的精确子集 (逐元素 copy)，
+    使用距离阈值 1e-6 快速匹配。
+    """
+    indices = []
+    for q in query:
+        dists = np.sum((reference - q) ** 2, axis=1)
+        idx = int(np.argmin(dists))
+        # 断言匹配到的是精确子集
+        if dists[idx] > 1e-6:
+            rospy.logwarn_throttle(10.0,
+                f'[path_smoother] Imprecise point match: dist={math.sqrt(dists[idx]):.3e}')
+        indices.append(idx)
+    return indices
 
 
 if __name__ == '__main__':

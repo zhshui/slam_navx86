@@ -15,11 +15,12 @@ preprocess:
     crop_body_max: [ 0.8,  0.35,  0.05]  # [x, y, z] max corner in LiDAR frame (m)
 
 mapping:
-    det_range: 20.0             # 扫描距离 默认300m
-    fov_degree: 360.0            # MID360 has 360 degree horizontal FOV
-    gyr_cov: 0.1
+    det_range: 20.0
+    fov_degree: 360.0             # MID360 has 360 degree horizontal FOV
+    gyr_cov: 1.0                  # Increased from 0.1: shorter prediction window needs
+                                  # larger gyro covariance to let LiDAR correct yaw drift
     acc_cov: 0.1
-    b_gyr_cov: 0.001
+    b_gyr_cov: 0.00001            # Reduced: allow more gyro bias correction per update
     b_acc_cov: 0.001
     extrinsic_est_en: true
     extrinsic_T: [0.0, 0.0, 0.0]
@@ -35,7 +36,7 @@ publish:
 
 pcd_save:
     pcd_save_en: true
-    interval: -1
+    interval: 50                # 每10帧一段(~1s/段)，降低pcl_wait_save内存峰值
     save_dir: "/home/unitree/go2_nav/lite_cog/system/map"
-    rear_filter_en: true            # 过滤雷达后方固定物
-    rear_filter_angle: 60.0         # 后方过滤扇形角度(度)，对称于正后方
+    rear_filter_en: true          # 过滤雷达后方固定物
+    rear_filter_angle: 60.0       # 后方过滤扇形角度(度)，对称于正后方

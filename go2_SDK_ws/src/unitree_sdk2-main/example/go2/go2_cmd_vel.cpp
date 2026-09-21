@@ -10,10 +10,14 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
 #include <std_msgs/String.h>
+#include <algorithm>
 #include <cmath>
 #include <unitree/robot/go2/sport/sport_client.hpp>
 #include <unitree/robot/channel/channel_subscriber.hpp>
 #include <unitree/idl/go2/SportModeState_.hpp>
+
+#include "classic_gait_initializer.h"
+#include "classic_gait_lock.h"
 
 #define TOPIC_HIGHSTATE "rt/sportmodestate"
 
@@ -59,7 +63,8 @@ class Custom
 public:
   Custom()
       : command_active_(false),
-        command_timeout_(0.5)
+        command_timeout_(0.5),
+        classic_gait_lock_(2.0)
   {
     // 初始化 Unitree SDK 客户端
     sport_client.SetTimeout(10.0f);
@@ -77,6 +82,9 @@ public:
     nh.param<double>("smoothing_alpha_angular", alpha_angular_, 0.7);
     nh.param<double>("angular_scale", angular_scale_, 1.0);
     nh.param<double>("command_timeout", command_timeout_, 0.5);
+    double classic_gait_lock_interval = 2.0;
+    nh.param<double>("classic_gait_lock_interval", classic_gait_lock_interval, 2.0);
+    classic_gait_lock_.setEnforcementInterval(classic_gait_lock_interval);
 
     filter_vx_.setAlpha(alpha_linear_);
     filter_vy_.setAlpha(alpha_linear_);
@@ -84,6 +92,31 @@ public:
 
     ROS_INFO("Velocity filter: alpha_linear=%.2f, alpha_angular=%.2f, angular_scale=%.2f, command_timeout=%.2fs",
              alpha_linear_, alpha_angular_, angular_scale_, command_timeout_);
+  }
+
+  void NavigationStateCallback(const std_msgs::String::ConstPtr& msg)
+  {
+    if (!classic_gait_lock_.updateNavigationState(msg->data))
+      return;
+
+    if (classic_gait_lock_.isLocked())
+      ROS_INFO("Classic gait lock enabled for navigation state %s", msg->data.c_str());
+    else
+      ROS_INFO("Classic gait lock released for navigation state %s", msg->data.c_str());
+  }
+
+  void ClassicGaitLockCallback(const ros::WallTimerEvent&)
+  {
+    const double now = ros::SteadyTime::now().toSec();
+    if (!classic_gait_lock_.isEnforcementDue(now))
+      return;
+
+    const int32_t code = sport_client.ClassicWalk(true);
+    classic_gait_lock_.recordEnforcement(now);
+    if (code == 0)
+      ROS_INFO_THROTTLE(10.0, "Classic gait lock active");
+    else
+      ROS_WARN_THROTTLE(10.0, "Classic gait lock request returned code=%d", code);
   }
 
   // ROS cmd_vel 回调函数
@@ -224,6 +257,7 @@ public:
   bool command_active_;
   double command_timeout_;
   ros::SteadyTime last_cmd_time_;
+  ClassicGaitLock classic_gait_lock_;
 
 private:
   void resetMotionState()
@@ -248,6 +282,10 @@ int main(int argc, char **argv)
     net_interface = argv[1];
   }
   nh.param<std::string>("nic", net_interface, net_interface);
+  int classic_gait_attempts = 5;
+  double classic_gait_retry_delay = 1.0;
+  private_nh.param<int>("classic_gait_attempts", classic_gait_attempts, 5);
+  private_nh.param<double>("classic_gait_retry_delay", classic_gait_retry_delay, 1.0);
 
   // 初始化 Unitree 通道
   unitree::robot::ChannelFactory::Instance()->Init(0, net_interface);
@@ -262,20 +300,40 @@ int main(int argc, char **argv)
 
   // 创建 ROS 订阅者，监听 /go2/sport_cmd 话题（姿态指令）
   ros::Subscriber sport_sub = nh.subscribe("/go2/sport_cmd", 10, &Custom::SportCmdCallback, &custom);
+  ros::Subscriber navigation_state_sub = nh.subscribe(
+      "/move_base/TebLocalPlannerROS/navigation_state", 10,
+      &Custom::NavigationStateCallback, &custom);
   ros::WallTimer watchdog_timer = nh.createWallTimer(
       ros::WallDuration(0.1), &Custom::WatchdogCallback, &custom);
+  ros::WallTimer classic_gait_lock_timer = nh.createWallTimer(
+      ros::WallDuration(0.1), &Custom::ClassicGaitLockCallback, &custom);
 
   ROS_INFO("Go2 CMD_VEL Bridge Started. Listening to /cmd_vel and /go2/sport_cmd...");
 
-  // 让机器进入可执行速度控制的站立/行走模式
-  sleep(1); 
+  // 初始化时选择一次经典步态；后续不再干预遥控器的步态选择。
+  sleep(1);
   int32_t stand_code = custom.sport_client.StandUp();
   sleep(1);
-  int32_t balance_code = custom.sport_client.BalanceStand();
-  sleep(1);
-  int32_t classic_code = custom.sport_client.ClassicWalk(true);
-  ROS_INFO("Robot motion mode init: StandUp=%d BalanceStand=%d ClassicWalk=%d",
-           stand_code, balance_code, classic_code);
+  int gait_attempt = 0;
+  int32_t classic_code = initializeClassicGait(
+      [&custom, &gait_attempt]() {
+        ++gait_attempt;
+        const int32_t code = custom.sport_client.ClassicWalk(true);
+        if (code != 0)
+          ROS_WARN("ClassicWalk attempt %d failed with code=%d", gait_attempt, code);
+        return code;
+      },
+      [classic_gait_retry_delay]() {
+        ros::WallDuration(classic_gait_retry_delay).sleep();
+      },
+      std::max(1, classic_gait_attempts));
+
+  if (classic_code == 0)
+    ROS_INFO("Robot motion mode init: StandUp=%d ClassicWalk=0 attempts=%d",
+             stand_code, gait_attempt);
+  else
+    ROS_ERROR("Robot motion mode init failed: StandUp=%d ClassicWalk=%d attempts=%d",
+              stand_code, classic_code, gait_attempt);
 
   // 循环等待 ROS 回调
   ros::spin();

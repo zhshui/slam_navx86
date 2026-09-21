@@ -45,6 +45,7 @@
 #include <Eigen/Core>
 #include "IMU_Processing.hpp"
 #include <nav_msgs/Odometry.h>
+#include <cstdlib>
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/Marker.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -97,17 +98,6 @@ bool   point_selected_surf[100000] = {0};
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 int lidar_type;
-
-/*** High-frequency IMU-propagated odometry ***/
-bool   hf_odom_inited = false;
-M3D    hf_R = Eye3d;
-V3D    hf_p = Zero3d;
-V3D    hf_v = Zero3d;
-double hf_state_time = 0;
-double hf_last_pub_time = 0;
-double hf_last_imu_time = 0;
-const double HF_ODOM_PERIOD = 0.01;  // 100Hz
-ros::Publisher pubImuOdom;
 
 vector<vector<int>>  pointSearchInd_surf; 
 vector<BoxPointType> cub_needrm;
@@ -314,6 +304,8 @@ double timediff_lidar_wrt_imu = 0.0;
 bool   timediff_set_flg = false;
 void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
+    static int pcl_cnt = 0;
+    if (pcl_cnt++ < 3) ROS_INFO("[pcl_cb] received LiDAR frame, pts=%d", msg->width * msg->height);
     mtx_buffer.lock();
     double preprocess_start_time = omp_get_wtime();
     scan_count ++;
@@ -346,6 +338,8 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     int num_points = msg->width * msg->height;
     custom_msg->point_num = num_points;
     custom_msg->points.resize(num_points);
+
+    double frame_base_ts = -1.0;  // 帧首点绝对时间戳（ns），用于计算帧内相对偏移
 
     const uint8_t* data_ptr = msg->data.data();
 
@@ -381,8 +375,11 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
         double ts;
         memcpy(&ts, pt_data + off_timestamp, sizeof(double));
-        // Convert timestamp (seconds) to offset_time (microseconds)
-        pt.offset_time = (uint32_t)(ts * 1000000.0);
+        // livox_ros_driver2 的 PointCloud2 timestamp 是绝对纳秒 (float64, ~1.79e18)，
+        // 直接 (uint32_t) 截断会落在 2^32 溢出边界 → offset_time≈4.29e9 → 帧时长被算成 4.29s → 运动补偿错误
+        // 改为帧内相对偏移（首点为 0，帧内单调递增 ≤ 100ms）
+        if (i == 0) frame_base_ts = ts;
+        pt.offset_time = (uint32_t)(ts - frame_base_ts);
     }
 
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
@@ -395,8 +392,10 @@ void livox_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     sig_buffer.notify_all();
 }
 
-void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in) 
+void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
+    static int imu_cnt = 0;
+    if (imu_cnt++ < 3) ROS_INFO("[imu_cb] received IMU frame");
     publish_count ++;
     // cout<<"IMU got at: "<<msg_in->header.stamp.toSec()<<endl;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
@@ -430,6 +429,9 @@ int    scan_num = 0;
 bool sync_packages(MeasureGroup &meas)
 {
     if (lidar_buffer.empty() || imu_buffer.empty()) {
+        static int empty_cnt = 0;
+        if (empty_cnt++ < 5 || empty_cnt % 100 == 0)
+            ROS_INFO("[sync] waiting: lidar_buf=%zu imu_buf=%zu", lidar_buffer.size(), imu_buffer.size());
         return false;
     }
 
@@ -456,6 +458,21 @@ bool sync_packages(MeasureGroup &meas)
             // std::cout << "1 " << meas.lidar_beg_time - lidar_end_time << std::endl;
             lidar_mean_scantime += (meas.lidar->points.back().curvature / double(1000) - lidar_mean_scantime) / scan_num;
         }
+        // Sanity check: if scan duration is unreasonably small (e.g. no per-point timestamps),
+        // fall back to the configured scan rate
+        if (lidar_end_time - meas.lidar_beg_time < 0.01)
+        {
+            lidar_end_time = meas.lidar_beg_time + 1.0 / p_pre->SCAN_RATE;
+        }
+
+        static int dbg_cnt = 0;
+        if (dbg_cnt++ < 5 || dbg_cnt % 50 == 0)
+            ROS_INFO("[sync] lidar_beg=%.6f end=%.6f dur=%.3fms lmu=%.6f lb=%zu ib=%zu pts=%zu",
+                meas.lidar_beg_time, lidar_end_time,
+                (lidar_end_time - meas.lidar_beg_time)*1000.0,
+                last_timestamp_imu, lidar_buffer.size(), imu_buffer.size(),
+                meas.lidar->points.size());
+
         if(lidar_type == MARSIM)
             lidar_end_time = meas.lidar_beg_time;
 
@@ -562,8 +579,9 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
     }
 
     /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. noted that pcd save will influence the real-time performences **/
+    /* Accumulate dense undistorted points in a bounded buffer,
+     * periodically save to PCD and clear.  This preserves full
+     * point density unlike the ikd-tree (which is 0.5m-downsampled). */
     if (pcd_save_en)
     {
         int size = feats_undistort->points.size();
@@ -586,14 +604,17 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFull)
         *pcl_wait_save += *laserCloudWorld;
 
         static int scan_wait_num = 0;
-        scan_wait_num ++;
-        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
+        scan_wait_num++;
+        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
         {
-            pcd_index ++;
-            string all_points_dir(map_save_dir + string("/scans_") + to_string(pcd_index) + string(".pcd"));
+            pcd_index++;
+            // Zero-padded segment names for correct sort order during merge
+            char seg_name[512];
+            snprintf(seg_name, sizeof(seg_name), "%s/scans_seg_%05d.pcd", map_save_dir.c_str(), pcd_index);
+            string all_points_dir(seg_name);
             pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
             pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            cout << "PCD seg saved: " << all_points_dir << " (" << pcl_wait_save->size() << " pts)" << endl;
             pcl_wait_save->clear();
             scan_wait_num = 0;
         }
@@ -688,137 +709,6 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     q.setZ(odomAftMapped.pose.pose.orientation.z);
     transform.setRotation( q );
     br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "body" ) );
-}
-
-void publish_high_freq_odom(const ros::Publisher &pub)
-{
-    double now = ros::Time::now().toSec();
-    if (now - hf_last_pub_time < HF_ODOM_PERIOD) return;
-    if (!hf_odom_inited || imu_buffer.empty()) return;
-
-    // Collect new IMU data since last propagation
-    std::vector<sensor_msgs::Imu::ConstPtr> new_imus;
-    {
-        std::lock_guard<std::mutex> lock(mtx_buffer);
-        for (const auto &imu : imu_buffer)
-        {
-            if (imu->header.stamp.toSec() > hf_last_imu_time)
-                new_imus.push_back(imu);
-        }
-    }
-
-    if (new_imus.empty())
-    {
-        // No new IMU data, just re-publish current state
-        nav_msgs::Odometry odom;
-        odom.header.frame_id = "camera_init";
-        odom.child_frame_id = "body";
-        odom.header.stamp = ros::Time().fromSec(hf_state_time);
-        odom.pose.pose.position.x = hf_p(0);
-        odom.pose.pose.position.y = hf_p(1);
-        odom.pose.pose.position.z = hf_p(2);
-        Eigen::Quaterniond q(hf_R);
-        odom.pose.pose.orientation.w = q.w();
-        odom.pose.pose.orientation.x = q.x();
-        odom.pose.pose.orientation.y = q.y();
-        odom.pose.pose.orientation.z = q.z();
-        odom.twist.twist.linear.x = hf_v(0);
-        odom.twist.twist.linear.y = hf_v(1);
-        odom.twist.twist.linear.z = hf_v(2);
-        pub.publish(odom);
-
-        static tf::TransformBroadcaster br;
-        tf::Transform transform;
-        transform.setOrigin(tf::Vector3(hf_p(0), hf_p(1), hf_p(2)));
-        tf::Quaternion q_tf(q.x(), q.y(), q.z(), q.w());
-        transform.setRotation(q_tf);
-        br.sendTransform(tf::StampedTransform(transform, odom.header.stamp, "camera_init", "body"));
-
-        hf_last_pub_time = now;
-        return;
-    }
-
-    // Forward integrate using new IMU data
-    M3D R = hf_R;
-    V3D p = hf_p;
-    V3D v = hf_v;
-    state_ikfom ref_state = kf.get_x();
-    V3D ba = ref_state.ba;
-    V3D bg = ref_state.bg;
-    V3D grav = ref_state.grav;
-    double imu_scale = G_m_s2 / p_imu->get_mean_acc().norm();
-
-    double last_t = hf_state_time;
-    V3D last_acc(0, 0, 0), last_gyro(0, 0, 0);
-    bool first = true;
-
-    for (const auto &imu : new_imus)
-    {
-        double t = imu->header.stamp.toSec();
-        V3D acc(imu->linear_acceleration.x, imu->linear_acceleration.y, imu->linear_acceleration.z);
-        V3D gyro(imu->angular_velocity.x, imu->angular_velocity.y, imu->angular_velocity.z);
-
-        if (!first)
-        {
-            double dt = t - last_t;
-            if (dt > 0 && dt < 0.1)
-            {
-                V3D gyro_avg = (last_gyro + gyro) * 0.5;
-                V3D acc_avg = (last_acc + acc) * 0.5 * imu_scale;
-
-                V3D omega = gyro_avg - bg;
-                V3D a_world = R * (acc_avg - ba) + grav;
-
-                // Euler forward integration
-                p = p + v * dt;
-                v = v + a_world * dt;
-                R = R * Exp(omega, dt);
-            }
-        }
-
-        last_t = t;
-        last_acc = acc;
-        last_gyro = gyro;
-        first = false;
-    }
-
-    // Update persistent state
-    hf_R = R;
-    hf_p = p;
-    hf_v = v;
-    hf_state_time = last_t;
-    hf_last_imu_time = last_t;
-
-    // Publish odometry
-    nav_msgs::Odometry odom;
-    odom.header.frame_id = "camera_init";
-    odom.child_frame_id = "body";
-    odom.header.stamp = ros::Time().fromSec(hf_state_time);
-
-    odom.pose.pose.position.x = hf_p(0);
-    odom.pose.pose.position.y = hf_p(1);
-    odom.pose.pose.position.z = hf_p(2);
-
-    Eigen::Quaterniond q(hf_R);
-    odom.pose.pose.orientation.w = q.w();
-    odom.pose.pose.orientation.x = q.x();
-    odom.pose.pose.orientation.y = q.y();
-    odom.pose.pose.orientation.z = q.z();
-
-    odom.twist.twist.linear.x = hf_v(0);
-    odom.twist.twist.linear.y = hf_v(1);
-    odom.twist.twist.linear.z = hf_v(2);
-
-    pub.publish(odom);
-
-    static tf::TransformBroadcaster br;
-    tf::Transform transform;
-    transform.setOrigin(tf::Vector3(hf_p(0), hf_p(1), hf_p(2)));
-    tf::Quaternion q_tf(q.x(), q.y(), q.z(), q.w());
-    transform.setRotation(q_tf);
-    br.sendTransform(tf::StampedTransform(transform, odom.header.stamp, "camera_init", "body"));
-
-    hf_last_pub_time = now;
 }
 
 void publish_path(const ros::Publisher pubPath)
@@ -1084,11 +974,9 @@ int main(int argc, char** argv)
             ("/cloud_effected", 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>
             ("/Laser_map", 100000);
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> 
             ("/Odometry", 100000);
-    pubImuOdom = nh.advertise<nav_msgs::Odometry>
-            ("/OdometryIMU", 100000);
-    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path>
+    ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> 
             ("/path", 100000);
 //------------------------------------------------------------------------------------------------------
     signal(SIGINT, SigHandle);
@@ -1209,16 +1097,6 @@ int main(int argc, char** argv)
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
 
-            /*** Update anchor state for high-frequency IMU odometry ***/
-            {
-                hf_R = state_point.rot.toRotationMatrix();
-                hf_p = state_point.pos;
-                hf_v = state_point.vel;
-                hf_state_time = lidar_end_time;
-                hf_last_imu_time = lidar_end_time;
-                hf_odom_inited = true;
-            }
-
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
             map_incremental();
@@ -1263,30 +1141,46 @@ int main(int argc, char** argv)
         }
 
         status = ros::ok();
-        publish_high_freq_odom(pubImuOdom);
         rate.sleep();
     }
 
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    if (pcd_save_en)
     {
-        string file_name;
-        string all_points_dir;
-        // Find next available index to avoid overwriting old files
-        do {
-            pcd_index++;
-            file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
-            all_points_dir = map_save_dir + string("/") + file_name;
-        } while (access(all_points_dir.c_str(), F_OK) == 0);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        if (pcd_save_interval > 0)
+        {
+            // Periodic mode: save remaining buffer as last segment.
+            // Merging is handled by map_stop_hook.sh (more reliable than in-process system())
+            if (pcl_wait_save->size() > 0)
+            {
+                pcd_index++;
+                char last_seg[512];
+                snprintf(last_seg, sizeof(last_seg), "%s/scans_seg_%05d.pcd", map_save_dir.c_str(), pcd_index);
+                pcl::PCDWriter pcd_writer;
+                pcd_writer.writeBinary(last_seg, *pcl_wait_save);
+                cout << "Final seg saved: " << last_seg << " (" << pcl_wait_save->size() << " pts)" << endl;
+            }
+        }
+        else if (pcl_wait_save->size() > 0)
+        {
+            // Original mode (interval=-1): save directly, same behavior as before
+            string file_name;
+            string all_points_dir;
+            do {
+                pcd_index++;
+                file_name = string("scans_") + to_string(pcd_index) + string(".pcd");
+                all_points_dir = map_save_dir + string("/") + file_name;
+            } while (access(all_points_dir.c_str(), F_OK) == 0);
+            pcl::PCDWriter pcd_writer;
+            cout << "current scan saved to /PCD/" << file_name << endl;
+            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
 
-        // PGM/YAML conversion is now handled by map_stop_hook.sh
-        // (called by web gateway on /api/mapping/stop).
-        // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
+            // PGM/YAML conversion is now handled by map_stop_hook.sh
+            // (called by web gateway on /api/mapping/stop).
+            // convert_pcd.sh is kept as a manual fallback for direct SIGINT.
+        }
     }
 
     fout_out.close();

@@ -92,29 +92,23 @@ if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
 	message("Download Livox-SDK from github and build&install it please!")
 	message("Download Livox-SDK from github and build&install it please!")
 
-	message("git clone Livox-SDK from github temporarily, only for ROS distro jenkins build!")
+	# No installed SDK. Try building the vendored in-tree copy if present.
+	# (Auto git-clone removed: it requires network access. To build the driver
+	#  node, put Livox-SDK source in Livox-SDK/ or install it to /usr/local/lib.)
+	message("Trying vendored in-tree Livox-SDK build ...")
+	if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/sdk_core)
+		execute_process(COMMAND cmake .. WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build OUTPUT_VARIABLE cmd_res)
+		FOREACH(res ${cmd_res})
+			MESSAGE(${res})
+		ENDFOREACH()
 
-	# clone livox sdk source code from github
-	execute_process(COMMAND rm -rf ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK OUTPUT_VARIABLE cmd_res)
-	message("Try to pull the livox sdk source code from github")
-	FOREACH(res ${cmd_res})
-		MESSAGE(${res})
-	ENDFOREACH()
-
-	execute_process(COMMAND git clone https://github.com/Livox-SDK/Livox-SDK.git ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK OUTPUT_VARIABLE cmd_res)
-	FOREACH(res ${cmd_res})
-		MESSAGE(${res})
-	ENDFOREACH()
-
-	execute_process(COMMAND cmake .. WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build OUTPUT_VARIABLE cmd_res)
-	FOREACH(res ${cmd_res})
-		MESSAGE(${res})
-	ENDFOREACH()
-
-	execute_process(COMMAND make WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build OUTPUT_VARIABLE cmd_res)
-	FOREACH(res ${cmd_res})
-		MESSAGE(${res})
-	ENDFOREACH()
+		execute_process(COMMAND make WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build OUTPUT_VARIABLE cmd_res)
+		FOREACH(res ${cmd_res})
+			MESSAGE(${res})
+		ENDFOREACH()
+	else()
+		message("No vendored Livox-SDK source - driver node will be skipped (messages still generated)")
+	endif()
 
 	include_directories(
 		./
@@ -128,6 +122,30 @@ if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
 
 else()
 	message("find livox sdk library success")
+		include_directories(
+			./
+			${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/sdk_core/include
+		)
+		link_directories(
+			./
+			${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core
+		)
+endif()
+
+#---------------------------------------------------------------------------------------
+# Node build requires the SDK static lib (installed or built in-tree above).
+# Without it (e.g. offline clone failure), skip the driver node and build
+# messages only - fast_lio needs this package for the generated CustomMsg.h.
+#---------------------------------------------------------------------------------------
+if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
+	set(LIVOX_SDK_IN_TREE ${CMAKE_CURRENT_SOURCE_DIR}/Livox-SDK/build/sdk_core/liblivox_sdk_static.a)
+	if(EXISTS ${LIVOX_SDK_IN_TREE})
+		set(LIVOX_SDK_LIBRARY ${LIVOX_SDK_IN_TREE})
+	endif()
+endif()
+if((NOT LIVOX_SDK_LIBRARY) OR (NOT EXISTS ${LIVOX_SDK_LIBRARY}))
+	set(LIVOX_SDK_MISSING TRUE)
+	message(WARNING "Livox-SDK library not found - skipping ${PROJECT_NAME}_node build (messages still generated)")
 endif()
 
 ## PCL library
@@ -137,6 +155,7 @@ add_definitions(${PCL_DEFINITIONS})
 #---------------------------------------------------------------------------------------
 # generate excutable and add libraries
 #---------------------------------------------------------------------------------------
+if(NOT LIVOX_SDK_MISSING)
 add_executable(${PROJECT_NAME}_node
     ""
     )
@@ -211,6 +230,7 @@ install(TARGETS ${PROJECT_NAME}_node
 	LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 	RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 	)
+endif()
 
 install(DIRECTORY
   launch

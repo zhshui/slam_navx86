@@ -9,6 +9,9 @@
     <node pkg="unitree_sdk2" type="go2_cmd_vel" name="go2_cmd_vel_node" output="screen" args="$(arg nic)">
         <param name="smoothing_alpha_angular" value="0.7" />
         <param name="angular_scale" value="1.0" />
+        <param name="classic_gait_attempts" value="5" />
+        <param name="classic_gait_retry_delay" value="1.0" />
+        <param name="classic_gait_lock_interval" value="2.0" />
     </node>
     
     <!-- 3. 可选：启动键盘控制 -->

@@ -27,7 +27,7 @@
 
 /// *************Preconfiguration
 
-#define MAX_INI_COUNT (10)
+#define MAX_INI_COUNT (20)
 
 const bool time_list(PointType &x, PointType &y) {return (x.curvature < y.curvature);};
 
@@ -61,7 +61,6 @@ class ImuProcess
   V3D cov_bias_acc;
   double first_lidar_time;
   int lidar_type;
-  V3D get_mean_acc() const { return mean_acc; }
 
  private:
   void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
@@ -383,20 +382,50 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
     IMU_init(meas, kf_state, init_iter_num);
 
     imu_need_init_ = true;
-    
+
     last_imu_   = meas.imu.back();
 
     state_ikfom imu_state = kf_state.get_x();
     if (init_iter_num > MAX_INI_COUNT)
     {
+      // Check if robot was stationary during initialization
+      // A moving robot contaminates the gravity estimate, causing localization to "fly away"
+      double acc_var = cov_acc.norm();
+      double grav_mag = mean_acc.norm();  // should be ~1.0 (g units) when stationary
+
+      // Hard limit: force init completion after ~5 seconds to avoid getting stuck
+      static int force_init_count = 0;
+      force_init_count++;
+
+      if (acc_var > 0.5 || fabs(grav_mag - G_m_s2) > 2.0)
+      {
+        if (force_init_count > 50)
+        {
+          ROS_WARN("IMU init: Forcing completion after %d attempts (acc_var=%.3f grav_mag=%.3f). "
+                   "Localization may be unstable!", force_init_count, acc_var, grav_mag);
+          // Fall through to complete init
+        }
+        else
+        {
+          // Robot was likely moving — extend initialization and warn
+          ROS_WARN("IMU init: possible motion detected! acc_var=%.3f grav_mag=%.3f. "
+                   "Keep robot STATIONARY during initialization. Extending init...",
+                   acc_var, grav_mag);
+          // Keep collecting, but rollback to get more stationary samples
+          init_iter_num = MAX_INI_COUNT / 2;
+          return;
+        }
+      }
+
       cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);
       imu_need_init_ = false;
+      force_init_count = 0;
 
       cov_acc = cov_acc_scale;
       cov_gyr = cov_gyr_scale;
-      ROS_INFO("IMU Initial Done");
-      // ROS_INFO("IMU Initial Done: Gravity: %.4f %.4f %.4f %.4f; state.bias_g: %.4f %.4f %.4f; acc covarience: %.8f %.8f %.8f; gry covarience: %.8f %.8f %.8f",\
-      //          imu_state.grav[0], imu_state.grav[1], imu_state.grav[2], mean_acc.norm(), cov_bias_gyr[0], cov_bias_gyr[1], cov_bias_gyr[2], cov_acc[0], cov_acc[1], cov_acc[2], cov_gyr[0], cov_gyr[1], cov_gyr[2]);
+      ROS_INFO("IMU Initial Done: grav dir=(%.3f,%.3f,%.3f) mag=%.3f, gyro_bias=(%.4f,%.4f,%.4f), acc_var=%.4f",
+                mean_acc(0), mean_acc(1), mean_acc(2), grav_mag,
+                mean_gyr(0), mean_gyr(1), mean_gyr(2), acc_var);
       fout_imu.open(DEBUG_FILE_DIR("imu.txt"),ios::out);
     }
 
