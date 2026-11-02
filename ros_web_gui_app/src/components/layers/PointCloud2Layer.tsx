@@ -281,7 +281,7 @@ export class PointCloud2Layer extends BaseLayer {
       // Reuse or create position attribute
       if (posAttr && posAttr.count >= count) {
         posAttr.copyArray(posData);
-        posAttr.count = count;
+        (posAttr as any).count = count;
         posAttr.needsUpdate = true;
       } else {
         geom.setAttribute('position', new THREE.BufferAttribute(posData, 3));
@@ -291,7 +291,7 @@ export class PointCloud2Layer extends BaseLayer {
       if (colData) {
         if (colAttr && colAttr.count >= count) {
           colAttr.copyArray(colData);
-          colAttr.count = count;
+          (colAttr as any).count = count;
           colAttr.needsUpdate = true;
         } else {
           geom.setAttribute('color', new THREE.BufferAttribute(colData, 3));
@@ -313,7 +313,7 @@ export class PointCloud2Layer extends BaseLayer {
         depthTest: false,
         depthWrite: false,
         transparent: true,
-        vertexColors: hasColors,
+        vertexColors: hasColors || undefined,
       });
       this.pointMesh = new THREE.Points(geom, mat);
       this.pointMesh.renderOrder = 9999;
@@ -346,7 +346,7 @@ export class PointCloud2Layer extends BaseLayer {
       const colAttr = geom.attributes.color as THREE.BufferAttribute | undefined;
       if (posAttr && posAttr.count >= count) {
         posAttr.copyArray(posBuf);
-        posAttr.count = count;
+        (posAttr as any).count = count;
         posAttr.needsUpdate = true;
       } else {
         geom.setAttribute('position', new THREE.BufferAttribute(posBuf.slice(0, count * 3), 3));
@@ -354,7 +354,7 @@ export class PointCloud2Layer extends BaseLayer {
       if (colBuf && colBuf.length >= count * 3) {
         if (colAttr && colAttr.count >= count) {
           colAttr.copyArray(colBuf);
-          colAttr.count = count;
+          (colAttr as any).count = count;
           colAttr.needsUpdate = true;
         } else {
           geom.setAttribute('color', new THREE.BufferAttribute(colBuf.slice(0, count * 3), 3));
@@ -375,7 +375,7 @@ export class PointCloud2Layer extends BaseLayer {
         depthTest: false,
         depthWrite: false,
         transparent: true,
-        vertexColors: hasColors,
+        vertexColors: hasColors || undefined,
       });
       this.pointMesh = new THREE.Points(geom, mat);
       this.pointMesh.renderOrder = 9999;

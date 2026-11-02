@@ -18,7 +18,7 @@ import {
   ModifyGridCommand,
   type GridCellChange,
 } from '../utils/CommandManager';
-import { publishGridToMap } from './MapEditor.GatewaySave';
+import { MapEditorSaveDialog } from './MapEditorSaveDialog';
 import { useGatewayContext } from './gateway/GatewayProvider';
 import './MapEditor.css';
 
@@ -88,6 +88,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   const layerManagerRef = useRef<LayerManager | null>(null);
   const topoLayerRef = useRef<TopoLayer | null>(null);
   const occupancyGridLayerRef = useRef<OccupancyGridLayer | null>(null);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [currentTool, setCurrentTool] = useState<EditTool>('move');
   const [brushSize, setBrushSize] = useState<number>(0.05);
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null);
@@ -122,8 +123,8 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   const placingPointStartRef = useRef<THREE.Vector3 | null>(null);
   const placingPointInitialRef = useRef<TopoPoint | null>(null);
   const placingPointArrowRef = useRef<THREE.Line | null>(null);
-  const [supportControllers, setSupportControllers] = useState<string[]>(['FollowPath']);
-  const [supportGoalCheckers, setSupportGoalCheckers] = useState<string[]>(['general_goal_checker']);
+  const [_supportControllers, setSupportControllers] = useState<string[]>(['FollowPath']);
+  const [_supportGoalCheckers, setSupportGoalCheckers] = useState<string[]>(['general_goal_checker']);
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [robotPos, setRobotPos] = useState<{ x: number; y: number; theta: number } | null>(null);
   const [editingPoint, setEditingPoint] = useState<TopoPoint | null>(null);
@@ -846,7 +847,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
 
       // Throttle to ~30fps using requestAnimationFrame
       if (drawRafIdRef.current !== null) return;
-      const evtButtons = event.buttons; // capture for RAF callback
       drawRafIdRef.current = requestAnimationFrame(() => {
         drawRafIdRef.current = null;
         if (worldPos) {
@@ -870,7 +870,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           positions.push({ x: worldPos.x, y: worldPos.y });
         }
 
-        const changes = occupancyGridLayerRef.current.modifyCells(positions, value, brushSize, initialGridValuesRef.current);
+        const changes = occupancyGridLayerRef.current!.modifyCells(positions, value, brushSize, initialGridValuesRef.current);
 
         for (const change of changes) {
           if (!currentGridChangesRef.current.has(change.index)) {
@@ -1298,60 +1298,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           topoLayerRef.current.setSelectedPoint(currentPoint);
         }
       }
-    }
-  };
-
-  const handleSave = () => {
-    const mapManager = mapManagerRef.current;
-
-    const defaultControllers = ['FollowPath'];
-    const defaultGoalCheckers = ['general_goal_checker'];
-
-    const allControllers = new Set<string>(defaultControllers);
-    const allGoalCheckers = new Set<string>(defaultGoalCheckers);
-
-    const existingMapProperty = mapManager.getMapProperty();
-    if (existingMapProperty) {
-      if (existingMapProperty.support_controllers) {
-        existingMapProperty.support_controllers.forEach(c => allControllers.add(c));
-      }
-      if (existingMapProperty.support_goal_checkers) {
-        existingMapProperty.support_goal_checkers.forEach(g => allGoalCheckers.add(g));
-      }
-    }
-
-    const routes = mapManager.getTopologyRoutes();
-    routes.forEach(route => {
-      if (route.route_info.controller) {
-        allControllers.add(route.route_info.controller);
-      }
-      if (route.route_info.goal_checker) {
-        allGoalCheckers.add(route.route_info.goal_checker);
-      }
-    });
-
-    const mapProperty = {
-      support_controllers: Array.from(allControllers).sort(),
-      support_goal_checkers: Array.from(allGoalCheckers).sort(),
-    };
-
-    mapManager.updateMapProperty(mapProperty);
-
-    try {
-      mapManager.saveAndPublishTopology(connection);
-      toast.success('拓扑地图已保存并发布');
-    } catch (error) {
-      console.error('Failed to save/publish topology map:', error);
-      mapManager.saveTopology();
-      toast.warning('保存成功，但发布失败');
-    }
-
-    try {
-      mapManagerRef.current.publishOccupancyGrid(connection);
-      toast.success('栅格地图已发布到 /map/update');
-    } catch (error) {
-      console.error('Failed to publish occupancy grid:', error);
-      toast.warning('栅格地图发布失败');
     }
   };
 
@@ -1875,45 +1821,6 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
   };
 
 
-  const handlePublishGridToMap = async () => {
-    const grid = occupancyGridLayerRef.current?.getMapMessage();
-    if (!grid || !grid.info || !grid.data) {
-      toast.error("没有可保存的栅格地图数据");
-      return;
-    }
-    try {
-      // 优先走网关 API（会写入 PGM+PNG 并更新 telemetry），rosbridge 直连作为备用
-      if (gatewayToken) {
-        const { apiBase } = await import('../api/gatewayApi');
-        const res = await fetch(`${apiBase}/api/map/publish`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${gatewayToken}`,
-          },
-          body: JSON.stringify({
-            width: grid.info.width,
-            height: grid.info.height,
-            resolution: grid.info.resolution,
-            origin: { x: grid.info.origin.position.x, y: grid.info.origin.position.y },
-            data: Array.isArray(grid.data) ? grid.data : Array.from(grid.data),
-          }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-      } else if (connection?.isConnected()) {
-        publishGridToMap(connection, grid);
-      } else {
-        toast.error("未连接到 rosbridge，请先登录网关或连接 ROS");
-        return;
-      }
-      toast.success("已发布到 /map 话题");
-    } catch (error) {
-      console.error("发布栅格地图失败:", error);
-      toast.error("发布失败: " + (error instanceof Error ? error.message : "未知错误"));
-    }
-  };
-
-
   const handleResetView = () => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
@@ -1972,6 +1879,13 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
 
   return (
     <div className="MapEditor">
+      {showSaveDialog && (
+        <MapEditorSaveDialog
+          token={gatewayToken || gatewayCtx.token}
+          getGrid={() => occupancyGridLayerRef.current?.getMapMessage() ?? null}
+          onClose={() => setShowSaveDialog(false)}
+        />
+      )}
       <div className="EditorHeader">
         <h2>地图编辑</h2>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -2018,7 +1932,7 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
           </button>
           <button
             className="SaveButton"
-            onClick={handlePublishGridToMap}
+            onClick={() => setShowSaveDialog(true)}
             type="button"
             style={{
               padding: "8px 16px",
@@ -2029,9 +1943,9 @@ export function MapEditor({ connection, onClose, gatewayToken }: MapEditorProps)
               cursor: "pointer",
               fontSize: "14px",
             }}
-            title="发布编辑后的栅格地图到 /map 话题"
+            title="选择配套 PCD，直接保存编辑后的地图"
           >
-            📡 发布到 /map
+            💾 选择 PCD 保存地图
           </button>
           <button className="CloseButton" onClick={onClose} type="button">
             ×

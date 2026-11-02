@@ -1,4 +1,4 @@
-<library path="lib/libteb_local_planner">
+<library path="libteb_local_planner">
 	<class name="teb_local_planner/TebLocalPlannerROS" type="teb_local_planner::TebLocalPlannerROS" base_class_type="nav_core::BaseLocalPlanner">
 		<description>
 			The teb_local_planner package implements a plugin
@@ -11,3 +11,4 @@
 		</description>
 	</class>
 </library>
+

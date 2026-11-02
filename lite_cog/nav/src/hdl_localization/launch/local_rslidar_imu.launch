@@ -26,14 +26,14 @@
   <arg name="robot_odom_frame_id" value="odom" />
   <arg name="plot_estimation_errors" value="false" />
 
-  <node name="MapServer" pkg="map_server" type="map_server" args="$(env HOME)/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
+  <node name="MapServer" pkg="map_server" type="map_server" args="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
 
   <!-- in case you use velodyne_driver, comment out the following line -->
   <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
 
     <!-- globalmap_server_nodelet -->
     <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-      <param name="globalmap_pcd" value="$(env HOME)/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
+      <param name="globalmap_pcd" value="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
       <param name="convert_utm_to_local" value="true" />
       <param name="downsample_resolution" value="0.1" />
     </node>
@@ -62,8 +62,8 @@
       <!-- if NDT is slow for your PC, try DIRECT1 serach method, which is a bit unstable but extremely fast -->
       <param name="ndt_neighbor_search_method" value="DIRECT7" />
       <param name="ndt_neighbor_search_radius" value="5.0" />
-      <param name="ndt_resolution" value="0.5" />
-      <param name="downsample_resolution" value="0.15" />
+      <param name="ndt_resolution" value="0.6" />
+      <param name="downsample_resolution" value="0.10" />
 
       <!-- quality gate: reject bad NDT corrections to protect UKF -->
       <param name="require_ndt_convergence" value="true" />
@@ -89,12 +89,12 @@
     <!-- 点云距离过滤器：滤除雷达支架/机体自反射点云 -->
     <node name="lidar_range_filter" pkg="hdl_localization" type="lidar_range_filter.py" output="screen">
       <param name="min_range" value="0.35" />
+      <param name="base_frame" value="base_link" />
+      <param name="min_base_z" value="-0.15" />
       <param name="input_topic" value="$(arg raw_points_topic)" />
       <param name="output_topic" value="$(arg points_topic)" />
     </node>
 
     <include file="$(find navigation)/launch/navigation.launch"/>
-    <!-- rviz disabled in headless operation; it crashes without a display
-         and can peg the CPU (velodyne_nodelet_manager 100%), stalling localization -->
-    <!-- <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" /> -->
+    <node name="rviz" pkg="rviz" type="rviz" required="false" args="-d $(find hdl_localization)/rviz/hdl_localization.rviz" />
 </launch>

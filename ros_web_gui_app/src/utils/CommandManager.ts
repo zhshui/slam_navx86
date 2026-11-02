@@ -279,19 +279,19 @@ export class ModifyGridCommand implements Command {
     const data = this.occupancyGridLayer.lastData;
     const width = this.occupancyGridLayer.lastWidth;
     const height = this.occupancyGridLayer.lastHeight;
-    
+
     for (const change of this.changes) {
       if (change.index >= 0 && change.index < data.length) {
         data[change.index] = change.newValue;
       }
     }
-    
+
     if (this.occupancyGridLayer.texture && this.changes.length > 0) {
       const indices = this.changes.map(c => c.index);
       const values = this.changes.map(c => c.newValue);
       this.occupancyGridLayer.updateTexturePartial(indices, values);
     }
-    
+
     if (this.occupancyGridLayer.lastMessage) {
       // Skip full copy for large maps — data is already in lastData
       const cells = width * height;
@@ -314,9 +314,7 @@ export class ModifyGridCommand implements Command {
     }
     
     const data = this.occupancyGridLayer.lastData;
-    const width = this.occupancyGridLayer.lastWidth;
-    const height = this.occupancyGridLayer.lastHeight;
-    
+
     for (const change of this.changes) {
       if (change.index >= 0 && change.index < data.length) {
         data[change.index] = change.oldValue;

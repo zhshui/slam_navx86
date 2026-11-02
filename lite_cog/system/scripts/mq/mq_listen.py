@@ -56,8 +56,8 @@ if MQ_TYPE == "mqtt":
             print(f"❌ MQTT 连接失败: {err_msg}")
     client = mqtt.Client(client_id=f"{MQ_CLIENT_ID}-listen", protocol=mqtt.MQTTv311)
     client.username_pw_set(MQ_USER, MQ_PASS)
-    client.on_message = on_msg
     client.on_connect = on_connect
+    client.on_message = on_msg
     result = client.connect(MQ_HOST, MQ_PORT, keepalive=60)
     # paho-mqtt v1.x connect() 返回 int (0=成功), v2.x 返回 MutableConnectResult
     rc = result.rc if hasattr(result, 'rc') else result
@@ -65,8 +65,6 @@ if MQ_TYPE == "mqtt":
         print(f"❌ MQTT connect() 失败: rc={rc}")
         sys.exit(1)
     client.loop_start()
-    topic_hint = f"nav/{MQ_CLIENT_ID}/{filter_type or '#'}"
-    print(f"👂 MQTT 监听 {topic_hint} (Ctrl+C 退出)")
     # 等待连接建立（最多 5 秒）
     waited = 0
     while not _connected and waited < 50:
@@ -77,6 +75,8 @@ if MQ_TYPE == "mqtt":
     if not _connected:
         print(f"❌ 连接 MQTT broker 超时 (5s)")
         sys.exit(1)
+    topic_hint = f"nav/{MQ_CLIENT_ID}/{filter_type or '#'}"
+    print(f"👂 MQTT 监听 {topic_hint} (Ctrl+C 退出)")
     try:
         while True: time.sleep(1)
     except KeyboardInterrupt:

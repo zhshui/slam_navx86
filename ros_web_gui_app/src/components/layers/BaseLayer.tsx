@@ -128,7 +128,7 @@ export abstract class BaseLayer implements LayerRenderable {
     } else {
       console.log(`[${this.constructor.name}] Connection set but not subscribing:`, {
         hasTopic: !!this.config.topic,
-        isConnected: connection.isConnected()
+        isConnected: connection?.isConnected()
       });
     }
   }

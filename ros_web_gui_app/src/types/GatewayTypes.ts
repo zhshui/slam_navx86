@@ -45,6 +45,9 @@ export interface MapRecord {
   pcd_path: string
   created_at: string
   active: number
+  registered?: boolean
+  no_yaml?: boolean
+  missing?: boolean
 }
 
 export interface Snapshot {
@@ -62,6 +65,7 @@ export interface Snapshot {
     mapUpdatedAt: string | null
     lastTfAt: string | null
     lastVoxelAt: string | null
+    navGoal: { x: number; y: number; yaw: number } | null
     tfPose: { x: number; y: number; yaw: number; frame: string }
     lidar: Array<{ x: number; y: number }>
     globalPlan: Array<{ x: number; y: number }>

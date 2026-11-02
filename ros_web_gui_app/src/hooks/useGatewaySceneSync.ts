@@ -115,7 +115,24 @@ export function useGatewaySceneSync({ scene, snapshot, navGoal, skipVoxelGrid, s
     const hasDirectData = map.data && map.data.length > 0;
     const hasMapUrl = !!(map as any).mapUrl;
 
-    if (!hasDirectData && !hasMapUrl) return;
+    if (!hasDirectData && !hasMapUrl) {
+      // 地图已清空（如开始新建图）→ 移除旧地图 mesh，避免机器人位置画在旧地图上
+      if (mapMeshRef.current) {
+        scene.remove(mapMeshRef.current);
+        mapMeshRef.current.geometry?.dispose();
+        if (Array.isArray(mapMeshRef.current.material)) {
+          mapMeshRef.current.material.forEach((m) => m.dispose());
+        } else {
+          mapMeshRef.current.material?.dispose();
+        }
+        mapMeshRef.current = null;
+      }
+      if (mapTextureRef.current) {
+        mapTextureRef.current.dispose();
+        mapTextureRef.current = null;
+      }
+      return;
+    }
 
     // 用地图更新时间戳检测变化，无变化时跳过重绘
     const mapUpdatedAt = snapshot?.runtime?.mapUpdatedAt;
@@ -316,9 +333,7 @@ export function useGatewaySceneSync({ scene, snapshot, navGoal, skipVoxelGrid, s
   //   points.name = 'gateway_lidar';
   //   scene.add(points);
   //   lidarPointsRef.current = points;
-  // }, [scene, snapshot?.runtime?.lidar]);
-
-  // 渲染全局路径（蓝色）
+  // }, [scene, snapshot?.runtime?.lidar]);  // 渲染全局路径（蓝色）
   useEffect(() => {
     const plan = snapshot?.runtime?.globalPlan;
     if (!scene) return;

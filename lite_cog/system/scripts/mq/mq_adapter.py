@@ -11,7 +11,7 @@ from typing import Optional
 import rospy
 import actionlib
 import tf
-from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from move_base_msgs.msg import MoveBaseAction, MoveBaseActionGoal, MoveBaseGoal
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped, Twist
 from std_msgs.msg import String as RosString
@@ -294,6 +294,12 @@ def h_switch_map(body, ref):
     _ack(ref, "switch_map", "accepted")
     rospy.loginfo(f"[MQ] switch_map: {mid}")
 
+def h_nav_only(body, ref):
+    """只启动当前地图的单点导航模式，不发送目标点。"""
+    ok, msg = _call_gateway("/api/nav/command", {"command": "nav-only"})
+    if ok: _ack(ref, "nav_only", "accepted")
+    else: _ack(ref, "nav_only", "rejected", msg[:200])
+
 def h_nav_single(body, ref, attach_route_ref=True):
     g = body.get("goal", {})
     x, y, yaw = g.get("x"), g.get("y"), g.get("yaw")
@@ -554,6 +560,7 @@ def h_motor_move(body, ref):
     else: _ack(ref, "motor_move", "rejected", "publisher not ready")
 
 HANDLERS = {"map_list": h_map_list, "nav_single": h_nav_single,
+            "nav_only": h_nav_only,
             "nav_goal": h_nav_goal, "switch_map": h_switch_map,
             "nav_multi": h_nav_multi, "nav_pause": h_nav_pause, "nav_resume": h_nav_resume,
             "nav_cancel": h_nav_cancel, "relocalize": h_relocalize,
@@ -620,6 +627,7 @@ class Publisher:
         self.sub_local_plan = rospy.Subscriber("/move_base/TebLocalPlannerROS/local_plan", Path, self._on_local_plan)
         self.sub_cmd_vel = rospy.Subscriber("/cmd_vel", Twist, self._on_cmd_vel)
         self.sub_simple_goal = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self._on_simple_goal)
+        self.sub_mb_goal = rospy.Subscriber("/move_base/goal", MoveBaseActionGoal, self._on_move_base_goal)
         self.sub_voxel = rospy.Subscriber("/move_base/local_costmap/stvl_obstacle_layer/voxel_grid",
                                           PointCloud2, self._on_voxel)
         self.sub_mb_status = rospy.Subscriber("/move_base/status", GoalStatusArray, self._on_mb_status)
@@ -642,14 +650,16 @@ class Publisher:
     def _on_cmd_vel(self, m):
         self.last_cmd_vel = m
         self.last_cmd_vel_time = time.time()
-    def _on_simple_goal(self, m):
-        """记录 /move_base_simple/goal — web 端发送的真实目标点"""
-        _, _, yaw = tf.transformations.euler_from_quaternion(
-            [m.pose.orientation.x, m.pose.orientation.y,
-             m.pose.orientation.z, m.pose.orientation.w])
-        self._last_simple_goal = (m.pose.position.x, m.pose.position.y, yaw)
-        state.route_ref.observe_goal(m.pose.position.x, m.pose.position.y)
-        # 有新的 simple_goal 意味着新导航开始，重置到达状态
+    def _record_goal(self, x, y, yaw):
+        """记录新导航目标并重置导航状态。
+
+        所有目标来源（/move_base_simple/goal、/move_base/goal action、MQ nav_goal）
+        统一走这里：_goal_received_at 是阻塞/未起步超时判定的时间基准，
+        不记录目标则这两条阻塞判据全部失效。
+        """
+        self._last_simple_goal = (x, y, yaw)
+        state.route_ref.observe_goal(x, y)
+        # 有新目标意味着新导航开始，重置到达/阻塞状态
         self._has_arrived = False
         self._last_arrived_goal_pos = None
         self._last_mb_status = -1       # 新目标 → 重置 move_base 状态
@@ -658,6 +668,27 @@ class Publisher:
         self._start_pos = None
         self._has_departed = False
         self._blocked_since = 0.0
+
+    def _on_simple_goal(self, m):
+        """记录 /move_base_simple/goal — web 端地图点击发送的目标点"""
+        _, _, yaw = tf.transformations.euler_from_quaternion(
+            [m.pose.orientation.x, m.pose.orientation.y,
+             m.pose.orientation.z, m.pose.orientation.w])
+        self._record_goal(m.pose.position.x, m.pose.position.y, yaw)
+
+    def _on_move_base_goal(self, m):
+        """记录 /move_base/goal (move_base action server) 的目标。
+
+        web 导航点面板 / 多点任务通过 action 发目标（只发 /move_base/goal，
+        不发 /move_base_simple/goal），不订阅这里阻塞判定就看不到这些目标。
+        """
+        target_pose = m.goal.target_pose
+        if target_pose is None:
+            return
+        p = target_pose.pose
+        _, _, yaw = tf.transformations.euler_from_quaternion(
+            [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w])
+        self._record_goal(p.position.x, p.position.y, yaw)
     def reset_pose_history(self):
         """收到新目标时清空位姿历史，重置起步状态"""
         self._pose_history.clear()

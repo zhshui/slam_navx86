@@ -6,7 +6,7 @@ common:
 
 preprocess:
     lidar_type: 1                # 1 for Livox AVIA serials (including MID360)
-    scan_line: 1
+    scan_line: 4
     timestamp_unit: 2
     scan_rate: 100
     blind: 0.3

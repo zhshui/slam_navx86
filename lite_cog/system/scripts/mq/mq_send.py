@@ -7,21 +7,25 @@
 import sys
 import os
 import json
+import uuid
 
 # ═══════════════════════════════════════════════════════════════
 #  改这里 ↓ 
 # ═══════════════════════════════════════════════════════════════
 MSG = json.dumps({
-  "header": {
-  "msg_type": "cmd",
-  
-},
+  "header": { "msg_type": "cmd" },
   "body": {
-    "cmd": "nav_goal",
-    "goal": { "x": 0, "y": 0, "yaw": 1.57, "frame_id": "map" }
+    "cmd": "nav_single",
+    "map_id": "亮宇edu",
+    "goal": { "x": 12.34, "y": -5.67, "yaw": 1.57, "frame_id": "map" }
   }
   })
 # ═══════════════════════════════════════════════════════════════
+
+# 自动补充指令 ID；手动填写 header.msg_id 时保留调用方给定的值。
+_msg_obj = json.loads(MSG)
+_msg_obj.setdefault("header", {}).setdefault("msg_id", str(uuid.uuid4()))
+MSG = json.dumps(_msg_obj, ensure_ascii=False)
 
 # ── MQ 配置 ──────────────────────────────────────────────────
 MQ_TYPE = os.environ.get("MQ_TYPE", "mqtt")
@@ -34,7 +38,6 @@ EXCHANGE = os.environ.get("MQ_EXCHANGE", "nav.exchange")
 VHOST = os.environ.get("MQ_VHOST", "/")
 
 if MQ_TYPE == "mqtt":
-    import uuid
     import paho.mqtt.client as mqtt_lib
 
     SENDER_ID = f"{MQ_CLIENT_ID}-send-{uuid.uuid4().hex[:8]}"

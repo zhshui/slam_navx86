@@ -18,6 +18,10 @@ void PointCloudPreprocess::Process(const livox_ros_driver::CustomMsg::ConstPtr &
 
 void PointCloudPreprocess::Process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudType::Ptr &pcl_out) {
     switch (lidar_type_) {
+        case LidarType::AVIA:
+            AviaHandlerPC2(msg);
+            break;
+
         case LidarType::OUST64:
             Oust64Handler(msg);
             break;
@@ -76,6 +80,66 @@ void PointCloudPreprocess::AviaHandler(const livox_ros_driver::CustomMsg::ConstP
     });
 
     for (uint i = 1; i < plsize; i++) {
+        if (is_valid_pt[i]) {
+            cloud_out_.points.push_back(cloud_full_[i]);
+        }
+    }
+}
+
+void PointCloudPreprocess::AviaHandlerPC2(const sensor_msgs::PointCloud2::ConstPtr &msg) {
+    cloud_out_.clear();
+    cloud_full_.clear();
+
+    // Livox PointCloud2 layout: x(f), y(f), z(f), intensity(f), tag(u8), line(u8), timestamp(f64)
+    // point_step = 26, offsets: 0,4,8,12,16,17,18
+    int plsize = msg->width * msg->height;
+    cloud_out_.reserve(plsize / point_filter_num_ + 1);
+    cloud_full_.resize(plsize);
+
+    const uint8_t* data = msg->data.data();
+    int point_step = msg->point_step;
+
+    std::vector<bool> is_valid_pt(plsize, false);
+
+    int tag_filtered = 0, line_filtered = 0, range_filtered = 0, pass_count = 0;
+    for (int i = 0; i < plsize; i++) {
+        const uint8_t* ptr = data + i * point_step;
+
+        float px = *reinterpret_cast<const float*>(ptr);
+        float py = *reinterpret_cast<const float*>(ptr + 4);
+        float pz = *reinterpret_cast<const float*>(ptr + 8);
+        float intensity = *reinterpret_cast<const float*>(ptr + 12);
+        uint8_t tag = *(ptr + 16);
+        uint8_t line = *(ptr + 17);
+        double timestamp = *reinterpret_cast<const double*>(ptr + 18);
+
+        // Filter: line < num_scans_, and tag bits 5-4 check
+        if (line >= num_scans_) { line_filtered++; continue; }
+        uint8_t tag_type = tag & 0x30;
+        if (tag_type != 0x10 && tag_type != 0x00) { tag_filtered++; continue; }
+
+        if (i % point_filter_num_ != 0) continue;
+
+        double range = px * px + py * py + pz * pz;
+        if (range < (blind_ * blind_)) { range_filtered++; continue; }
+
+        cloud_full_[i].x = px;
+        cloud_full_[i].y = py;
+        cloud_full_[i].z = pz;
+        cloud_full_[i].intensity = intensity;
+        cloud_full_[i].curvature = 0.0;  // temp: match C16Handler behavior
+        is_valid_pt[i] = true;
+        pass_count++;
+    }
+    LOG_FIRST_N(INFO, 5) << "AviaHandlerPC2: plsize=" << plsize
+                         << " line_filt=" << line_filtered
+                         << " tag_filt=" << tag_filtered
+                         << " range_filt=" << range_filtered
+                         << " pass=" << pass_count
+                         << " first_tag=" << (int)(plsize > 0 ? msg->data[16] : 0)
+                         << " first_line=" << (int)(plsize > 0 ? msg->data[17] : 0);
+
+    for (int i = 0; i < plsize; i++) {
         if (is_valid_pt[i]) {
             cloud_out_.points.push_back(cloud_full_[i]);
         }
@@ -194,28 +258,36 @@ void PointCloudPreprocess::VelodyneHandler(const sensor_msgs::PointCloud2::Const
 void PointCloudPreprocess::C16Handler(const sensor_msgs::PointCloud2::ConstPtr &msg) {
     cloud_out_.clear();
     cloud_full_.clear();
-    pcl::PointCloud<leishen_ros::Point> pl_orig;
-    pcl::fromROSMsg(*msg, pl_orig);
-    int plsize = pl_orig.size();
-    cloud_out_.reserve(plsize);
 
-    for (int i = 0; i < pl_orig.points.size(); i++) {
+    int plsize = msg->width * msg->height;
+    cloud_out_.reserve(plsize / point_filter_num_ + 1);
+
+    const uint8_t* data = msg->data.data();
+    int point_step = msg->point_step;
+
+    // Parse Livox PointCloud2 directly: x(f,0), y(f,4), z(f,8), intensity(f,12), tag(u8,16), line(u8,17), timestamp(f64,18)
+    for (int i = 0; i < plsize; i++) {
         if (i % point_filter_num_ != 0) continue;
 
-        double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y +
-                       pl_orig.points[i].z * pl_orig.points[i].z;
+        const uint8_t* ptr = data + i * point_step;
+        float px = *reinterpret_cast<const float*>(ptr);
+        float py = *reinterpret_cast<const float*>(ptr + 4);
+        float pz = *reinterpret_cast<const float*>(ptr + 8);
+        float intensity = *reinterpret_cast<const float*>(ptr + 12);
+        double timestamp = *reinterpret_cast<const double*>(ptr + 18);
 
+        double range = px * px + py * py + pz * pz;
         if (range < (blind_ * blind_)) continue;
 
-        Eigen::Vector3d pt_vec;
         PointType added_pt;
-        added_pt.x = pl_orig.points[i].x;
-        added_pt.y = pl_orig.points[i].y;
-        added_pt.z = pl_orig.points[i].z;
-        added_pt.intensity = pl_orig.points[i].intensity;
+        added_pt.x = px;
+        added_pt.y = py;
+        added_pt.z = pz;
+        added_pt.intensity = intensity;
         added_pt.normal_x = 0;
         added_pt.normal_y = 0;
         added_pt.normal_z = 0;
+        added_pt.curvature = 0.0;  // timestamp handled by separate mechanism
 
         cloud_out_.points.push_back(added_pt);
     }

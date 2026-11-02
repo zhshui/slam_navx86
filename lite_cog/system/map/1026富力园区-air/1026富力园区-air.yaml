@@ -1,6 +1,6 @@
-image: 办公室.pgm
+image: 1026富力园区-air.pgm
 resolution: 0.05
-origin: [-7.25296, -15.9751, 0]
+origin: [-101.802, -86.081, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196

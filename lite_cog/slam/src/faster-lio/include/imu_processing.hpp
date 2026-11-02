@@ -143,8 +143,30 @@ void ImuProcess::IMUInit(const common::MeasureGroup &meas, esekfom::esekf<state_
 
         N++;
     }
+    // --- Gravity alignment: align world frame Z-axis with gravity to produce level PCD maps ---
+    common::V3D g_dir = mean_acc_ / mean_acc_.norm();  // unit gravity direction in IMU frame
+    common::V3D g_world(0, 0, 1);                       // desired "up" direction in world frame
+
+    common::M3D R_gravity_align;
+    common::V3D rot_axis = g_dir.cross(g_world);
+    double dot_product = g_dir.dot(g_world);
+    if (rot_axis.norm() < 1e-9)
+    {
+        if (dot_product > 0)
+            R_gravity_align.setIdentity();            // already aligned
+        else
+            R_gravity_align = Eigen::AngleAxisd(M_PI, common::V3D::UnitX()).toRotationMatrix();
+    }
+    else
+    {
+        rot_axis.normalize();
+        double rot_angle = acos(std::max(-1.0, std::min(1.0, dot_product)));
+        R_gravity_align = Eigen::AngleAxisd(rot_angle, rot_axis).toRotationMatrix();
+    }
+
     state_ikfom init_state = kf_state.get_x();
-    init_state.grav = S2(-mean_acc_ / mean_acc_.norm() * common::G_m_s2);
+    init_state.grav = S2(-g_world * common::G_m_s2);   // gravity points straight down in world frame
+    init_state.rot  = R_gravity_align;                  // align world frame Z with gravity
 
     init_state.bg = mean_gyr_;
     init_state.offset_T_L_I = Lidar_T_wrt_IMU_;

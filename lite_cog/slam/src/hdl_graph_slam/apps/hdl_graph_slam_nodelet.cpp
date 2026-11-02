@@ -106,7 +106,7 @@ public:
     odom_frame_id = private_nh.param<std::string>("odom_frame_id", "odom");
     map_cloud_resolution = private_nh.param<double>("map_cloud_resolution", 0.05);
     auto_save_on_exit = private_nh.param<bool>("auto_save_on_exit", false);
-    auto_save_path = private_nh.param<std::string>("auto_save_path", "/home/shui/LY/lite_cog/system/map/lite3.pcd");
+    auto_save_path = private_nh.param<std::string>("auto_save_path", "/home/unitree/go2_nav/lite_cog/system/map/lite3.pcd");
     trans_odom2map.setIdentity();
 
     max_keyframes_per_update = private_nh.param<int>("max_keyframes_per_update", 10);

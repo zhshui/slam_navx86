@@ -97,7 +97,7 @@ function buildOccToRgbaLut(colorMode: ColorModes, alpha: number): Uint8Array {
   const tempColor = { r: 0, g: 0, b: 0, a: 0 };
   for (let v = 0; v <= 100; v++) {
     const offset = v * 4;
-    paletteColorCached(tempColor, v, colorMode);
+    paletteColorCached(tempColor, v, colorMode as 'costmap' | 'map' | 'raw');
     lut[offset] = tempColor.r;
     lut[offset + 1] = tempColor.g;
     lut[offset + 2] = tempColor.b;
@@ -231,7 +231,7 @@ export class OccupancyGridLayer extends BaseLayer {
         this.origWidth = msg.info.width;
         this.origHeight = msg.info.height;
         this.lastMessage = {
-          header: msg.header ? { ...msg.header } : { frame_id: '' },
+          header: msg.header ? { ...msg.header } : { frame_id: '', stamp: { sec: 0, nsec: 0 } },
           info: { ...msg.info, width: msg.info.width, height: msg.info.height, resolution: msg.info.resolution },
           data: this.lastData,
         };
@@ -240,7 +240,7 @@ export class OccupancyGridLayer extends BaseLayer {
         this.lastWidth = width;
         this.lastHeight = height;
         this.lastMessage = {
-          header: msg.header ? { ...msg.header } : { frame_id: '' },
+          header: msg.header ? { ...msg.header } : { frame_id: '', stamp: { sec: 0, nsec: 0 } },
           info: { ...msg.info, width, height, resolution: effectiveResolution },
           data: new Int8Array(0),
         };

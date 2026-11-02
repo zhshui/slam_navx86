@@ -112,6 +112,11 @@
 .GatewayPanelOverlay::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); border-radius: 3px; }
 .GatewayPanelOverlay::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.45); }
 
+.GatewayPanelOverlay.GatewayPanelOverlay--maps {
+  width: 980px;
+  max-height: calc(100dvh - 60px);
+}
+
 .GatewayPanelHeader {
   position: sticky;
   top: 0;
@@ -254,6 +259,11 @@
     max-height: 50dvh;
     border-radius: 0 0 8px 8px;
     box-sizing: border-box;
+  }
+
+  .GatewayPanelOverlay.GatewayPanelOverlay--maps {
+    width: 100%;
+    max-height: calc(100dvh - 44px);
   }
 
   .ViewControls { top: 40px; right: 6px; gap: 4px; }

@@ -1,4 +1,10 @@
 TebLocalPlannerROS:
+  # ═══════════════════════════════════════════════════════════════
+  # 障碍物膨胀 — 两组参数分开管理:
+  #   · 全局路径: global_path_obstacle_safe_distance (全局规划器读取, 离障碍安全距离)
+  #   · 局部路径: min_obstacle_dist / inflation_dist (本规划器避障用)
+  # ═══════════════════════════════════════════════════════════════
+  global_path_obstacle_safe_distance: 0.5
   controller_frequency: 10
   footprint_model:
     type: polygon
@@ -13,11 +19,11 @@ TebLocalPlannerROS:
   dt_hysteresis: 0.1
   min_samples: 3
   max_samples: 100
-  global_plan_overwrite_orientation: false # 关掉=让TEB自己优化朝向，靠nh约束自然对齐
-  allow_init_with_backwards_motion: false
-  global_plan_viapoint_sep: 0.05  # 途经点极密=强力锁定全局路径
+  global_plan_overwrite_orientation: true
+  allow_init_with_backwards_motion: true
+  global_plan_viapoint_sep: -1.0
   via_points_ordered: false
-  max_global_plan_lookahead_dist: 5.0
+  max_global_plan_lookahead_dist: 2.0
   global_plan_prune_distance: 0.5
   exact_arc_length: false
   force_reinit_new_goal_dist: 0.5
@@ -30,14 +36,14 @@ TebLocalPlannerROS:
   prevent_look_ahead_poses_near_goal: 5 # 当轨迹剩余未走的点 ≤5 个时，控制器禁用前视，只近距离跟踪，快速稳定停在目标。
 
   # Robot
-  max_vel_x: 1.0
-  max_vel_x_backwards: 0.0  #禁止倒退
+  max_vel_x: 0.8
+  max_vel_x_backwards: 0.3
   max_vel_y: 0.1
-  max_vel_trans: 1.0
-  max_vel_theta: 1.5
-  acc_lim_x: 1.0
+  max_vel_trans: 0.8
+  max_vel_theta: 0.8
+  acc_lim_x: 0.5
   acc_lim_y: 0.1
-  acc_lim_theta: 1.5
+  acc_lim_theta: 0.5
   min_turning_radius: 0.0
   wheelbase: 0.0  # only for cmd_angle_instead_rotvel enabled car-like robot  
   cmd_angle_instead_rotvel: false
@@ -46,8 +52,8 @@ TebLocalPlannerROS:
   transform_tolerance: 0.3
 
   # GoalTolerance
-  xy_goal_tolerance: 0.2
-  yaw_goal_tolerance: 0.15
+  xy_goal_tolerance: 0.1
+  yaw_goal_tolerance: 0.1
   free_goal_vel: false
   trans_stopped_vel: 0.05
   theta_stopped_vel: 0.05
@@ -57,18 +63,18 @@ TebLocalPlannerROS:
 
   # Obstacles
   min_obstacle_dist: 0.15
-  inflation_dist: 0.15
+  inflation_dist: 0.8
   dynamic_obstacle_inflation_dist: 0.2
   include_dynamic_obstacles: true
   include_costmap_obstacles: false
   costmap_obstacles_behind_robot_dist: 2.0
   obstacle_poses_affected: 10
   legacy_obstacle_association: false
-  obstacle_association_force_inclusion_factor: 3
+  obstacle_association_force_inclusion_factor: 3 
   obstacle_association_cutoff_factor: 10
   costmap_converter_plugin: "costmap_converter::CostmapToPolygonsDBSMCCH"
-  costmap_converter:
-    CostmapToPolygonsDBSMCCH:
+  costmap_converter: 
+    CostmapToPolygonsDBSMCCH: 
       cluster_max_distance: 0.3
       cluster_max_pts: 30
       cluster_min_pts: 3
@@ -79,8 +85,8 @@ TebLocalPlannerROS:
   obstacle_proximity_upper_bound: 0.6
 
   # Optimization
-  no_inner_iterations: 15
-  no_outer_iterations: 12
+  no_inner_iterations: 10
+  no_outer_iterations: 8
   optimization_activate: true
   # optimization_verbose: false
   penalty_epsilon: 0.05      #default 0.05
@@ -90,17 +96,17 @@ TebLocalPlannerROS:
   # weight_acc_lim_x: 1
   # weight_acc_lim_y: 1
   weight_acc_lim_theta: 10
-  weight_kinematics_nh: 1000  #default 1000（增大=更强的非完整约束，确保车身朝向与运动方向一致）
-  weight_kinematics_forward_drive: 100  #禁止倒退（越大越排斥，走不了就转圈）
+  weight_kinematics_nh: 1000   #default 1000
+  weight_kinematics_forward_drive: 5 # 0 = 允许后退 (user requested 2026-09-14); 40 = prefer forward travel only
   weight_kinematics_turning_radius: 0 #default 1
-  weight_optimaltime: 1
-  weight_shortest_path: 50  #default 0（极大=强力贴合全局路径，拒绝任何绕路）
-  weight_obstacle: 50
-  weight_inflation: 0.1
-  weight_dynamic_obstacle: 50
-  weight_dynamic_obstacle_inflation: 0.1
+  weight_optimaltime: 5
+  weight_shortest_path: 0  #default 0, avoid cutting corners away from the global path
+  # weight_obstacle: 50
+  # weight_inflation: 0.1
+  # weight_dynamic_obstacle: 50
+  # weight_dynamic_obstacle_inflation: 0.1
   # weight_velocity_obstacle_ratio: 0
-  weight_viapoint: 50        #default 1（极大=几乎锁死在全局路径途经点上）
+  weight_viapoint: 0
   weight_prefer_rotdir: 50   #default 50
   # weight_adapt_factor: 2
   # obstacle_cost_exponent: 1

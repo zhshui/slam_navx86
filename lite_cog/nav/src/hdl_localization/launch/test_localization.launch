@@ -6,11 +6,11 @@
   <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
 
   <!-- Map server: loads the PCD map -->
-  <node name="MapServer" pkg="map_server" type="map_server" args="$(env HOME)/LY/lite_cog/system/map/$(arg map_name).yaml"/>
+  <node name="MapServer" pkg="map_server" type="map_server" args="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).yaml"/>
 
   <!-- globalmap_server_nodelet: loads global map for NDT matching -->
   <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-    <param name="globalmap_pcd" value="$(env HOME)/LY/lite_cog/system/map/$(arg map_name).pcd" />
+    <param name="globalmap_pcd" value="/home/unitree/go2_nav/lite_cog/system/map/$(arg map_name).pcd" />
     <param name="convert_utm_to_local" value="true" />
     <param name="downsample_resolution" value="0.1" />
   </node>

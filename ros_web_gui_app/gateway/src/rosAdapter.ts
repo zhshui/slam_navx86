@@ -553,7 +553,7 @@ export class RosbridgeAdapter implements RosAdapter {
     // JSON serializer (>200MB JSON, 1.7GB RAM). The gateway reads PGM from disk instead.
     const topics = [
       { topic: this.config.topics.tf, type: 'tf2_msgs/TFMessage' },
-      this.config.topics.lidar ? { topic: this.config.topics.lidar, type: 'sensor_msgs/PointCloud2' } : null,
+      // /livox/lidar 原始点云不再订阅（前端走 /cloud_registered，避免 700KB/帧 浪费带宽）
       this.config.topics.globalPlan ? { topic: this.config.topics.globalPlan, type: 'nav_msgs/Path' } : null,
       this.config.topics.localPlan ? { topic: this.config.topics.localPlan, type: 'nav_msgs/Path' } : null,
       this.config.topics.voxelGrid ? { topic: this.config.topics.voxelGrid, type: 'sensor_msgs/PointCloud2' } : null,

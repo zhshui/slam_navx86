@@ -11,7 +11,7 @@ import { ImageDisplay } from './ImageDisplay';
 import { TopoPointInfoPanel } from './TopoPointInfoPanel';
 import { NavParamsPanel } from './NavParamsPanel';
 import { DEFAULT_LAYER_CONFIGS } from '../constants/layerConfigs';
-import { loadLayerConfigs, saveLayerConfigs, saveImagePositions, type ImagePositionsMap } from '../utils/layerConfigStorage';
+import { loadLayerConfigs, saveImagePositions, type ImagePositionsMap } from '../utils/layerConfigStorage';
 import { useLayerConfigSync } from '../hooks/useLayerConfigSync';
 import { useInitialization } from '../hooks/useInitialization';
 import { useImageLayers } from '../hooks/useImageLayers';
@@ -61,7 +61,7 @@ interface MapViewProps {
 
 export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLogout }: MapViewProps) {
   const [gatewayPanel, setGatewayPanel] = useState<GatewayPanel | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [_mobileMenuOpen, _setMobileMenuOpen] = useState(false);
   const [showGatewayLogin, setShowGatewayLogin] = useState(false);
   const [gwUsername, setGwUsername] = useState('admin');
   const [gwPassword, setGwPassword] = useState('admin123');
@@ -121,13 +121,13 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
     const saved = loadLayerConfigs();
     return (saved?.map_cloud?.maxTotalPoints as number) ?? (DEFAULT_LAYER_CONFIGS.map_cloud?.maxTotalPoints as number) ?? 5000000;
   });
-  const [showDensitySlider, setShowDensitySlider] = useState(false);
+  const [_showDensitySlider, _setShowDensitySlider] = useState(false);
   const [scanDistance, setScanDistance] = useState<number>(5);
-  const [showScanDistSlider, setShowScanDistSlider] = useState(false);
-  const [navTolerance, setNavTolerance] = useState<number>(0.2);
-  const [showNavTolSlider, setShowNavTolSlider] = useState(false);
-  const [obstacleDist, setObstacleDist] = useState<number>(0.15);
-  const [showObstacleDistSlider, setShowObstacleDistSlider] = useState(false);
+  const [_showScanDistSlider, _setShowScanDistSlider] = useState(false);
+  const [_navTolerance, _setNavTolerance] = useState<number>(0.2);
+  const [_showNavTolSlider, _setShowNavTolSlider] = useState(false);
+  const [_obstacleDist, _setObstacleDist] = useState<number>(0.15);
+  const [_showObstacleDistSlider, _setShowObstacleDistSlider] = useState(false);
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [robotPos, setRobotPos] = useState<{ x: number; y: number; theta: number } | null>(null);
   const focusRobotRef = useRef(false);
@@ -158,7 +158,6 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
   const poseEstimateRef = useRef<{ x: number; y: number; yaw: number } | null>(null);
   const isEstimatingRef = useRef(false);
   const estimateStartRef = useRef<THREE.Vector3 | null>(null);
-  const estimateArrowRef = useRef<THREE.Line | null>(null);
   const estimateLineObjRef = useRef<THREE.Line | null>(null);
   const estimateModeRef = useRef<'relocalize' | 'navgoal' | null>(null);
   const initialposeTopicRef = useRef<string>('/initialpose');
@@ -618,20 +617,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
 
   // 通过网关获取地图/机器人/激光数据，渲染到 3D 场景（无需 rosbridge 直连）
   const gatewayCtx = useGatewayContext();
-  useGatewaySceneSync({ scene: sceneRef.current, snapshot: gatewayCtx.snapshot, navGoal: navGoal || gatewayCtx.snapshot?.runtime?.navGoal, skipVoxelGrid: connection?.isConnected() ?? false, skipMap: !!gatewayToken });
-
-  // 网关模式下：从遥测 tfPose 更新左下角机器人坐标（rosbridge 直连时 TF2JS 已经更新了）
-  useEffect(() => {
-    const tfPose = gatewayCtx.snapshot?.runtime?.tfPose;
-    if (!tfPose) return;
-    // TF2JS 有数据时优先用 TF（更精确），网关 tfPose 作为 fallback
-    if (robotPos && connection?.isConnected()) return;
-    setRobotPos({
-      x: tfPose.x,
-      y: tfPose.y,
-      theta: tfPose.yaw,
-    });
-  }, [gatewayCtx.snapshot?.runtime?.tfPose, connection]);
+  useGatewaySceneSync({ scene: sceneRef.current, snapshot: gatewayCtx.snapshot, navGoal, skipVoxelGrid: connection?.isConnected() ?? false, skipMap: !!gatewayToken });
 
   // 网关模式下，将遥测地图数据注入 MapManager 供 OccupancyGridLayer 渲染
   const lastMapInjectedRef = useRef<string>('');
@@ -664,6 +650,19 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
       setNavGoal(null);
     }
   }, [gatewayCtx.snapshot?.runtime?.navMode]);
+
+  // 同步外部来源的 nav_goal（例如通过 MQ 发送的导航目标点）
+  useEffect(() => {
+    const externalNavGoal = gatewayCtx.snapshot?.runtime?.navGoal;
+    if (!externalNavGoal) return;
+    if (gatewayCtx.snapshot?.runtime?.navMode === 'multi') return;
+    setNavGoal((prev) => {
+      if (prev && prev.x === externalNavGoal.x && prev.y === externalNavGoal.y && prev.yaw === externalNavGoal.yaw) {
+        return prev;
+      }
+      return { x: externalNavGoal.x, y: externalNavGoal.y, yaw: externalNavGoal.yaw };
+    });
+  }, [gatewayCtx.snapshot?.runtime?.navGoal, gatewayCtx.snapshot?.runtime?.navMode]);
 
   // 系统内存轮询 (5s)
   useEffect(() => {
@@ -797,32 +796,6 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
       if (next.voxel_grid) next.voxel_grid = { ...next.voxel_grid, maxDistance: maxDist };
       return next;
     });
-  };
-
-  const handleNavToleranceChange = async (value: number) => {
-    setNavTolerance(value);
-    if (!gatewayTokenRef.current) return;
-    try {
-      const { apiBase } = await import('../api/gatewayApi');
-      await fetch(`${apiBase}/api/nav/tolerance`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayTokenRef.current}` },
-        body: JSON.stringify({ xy_tolerance: value }),
-      });
-    } catch {}
-  };
-
-  const handleObstacleDistChange = async (value: number) => {
-    setObstacleDist(value);
-    if (!gatewayTokenRef.current) return;
-    try {
-      const { apiBase } = await import('../api/gatewayApi');
-      await fetch(`${apiBase}/api/nav/obstacle-dist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayTokenRef.current}` },
-        body: JSON.stringify({ min_dist: value }),
-      });
-    } catch {}
   };
 
   const exitEstimateMode = () => {
@@ -1009,7 +982,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
 
       {/* Gateway panel overlay */}
       {gatewayToken && gatewayPanel && (
-        <div className="GatewayPanelOverlay" ref={gwPanelRef}>
+        <div className={'GatewayPanelOverlay' + (gatewayPanel === 'map-manager' ? ' GatewayPanelOverlay--maps' : '')} ref={gwPanelRef}>
           <div className="GatewayPanelHeader">
             <h3>{gatewayButtons.find(b => b.id === gatewayPanel)?.label || ''}</h3>
             <button
@@ -1120,7 +1093,7 @@ export function MapView({ connection, gatewayToken, onGatewayLogin, onGatewayLog
             (topoLayer as any).setSelectedRoute(null);
           }
         }}
-        connection={connection}
+        connection={connection!}
       />
       <canvas ref={canvasRef} className="MapCanvas" style={{ touchAction: 'none' }}
         onMouseMove={handleCanvasMouseMove}

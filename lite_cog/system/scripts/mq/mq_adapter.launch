@@ -6,6 +6,6 @@
     <param name="MQ_PASS" value="" />
     <param name="MQ_VHOST" value="/" />
     <param name="MQ_EXCHANGE" value="nav.exchange" />
-    <param name="MQ_CLIENT_ID" value="B42D1000P3499GGW" />
+    <param name="MQ_CLIENT_ID" value="B42D4000Q3K87FG1" />
   </node>
 </launch>

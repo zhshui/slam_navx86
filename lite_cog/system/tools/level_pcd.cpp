@@ -61,7 +61,7 @@ void print_usage(const char* prog) {
 }
 
 Eigen::Matrix4f compute_leveling_transform(const Eigen::Vector3f& ground_normal,
-                                            const pcl::PointCloud<pcl::PointXYZI>::Ptr& ground_inliers) {
+                                            const pcl::PointCloud<pcl::PointXYZ>::Ptr& ground_inliers) {
     // Desired normal: straight up (0, 0, 1)
     const Eigen::Vector3f target(0.0f, 0.0f, 1.0f);
 
@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
               << "  voxel_leaf=" << opts.voxel_leaf << " m\n";
 
     // --- Load PCD ---
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
     if (pcl::io::loadPCDFile(opts.input, *cloud) == -1) {
         std::cerr << "[level_pcd] ERROR: Failed to load " << opts.input << "\n";
         return 1;
@@ -167,9 +167,9 @@ int main(int argc, char** argv) {
     }
 
     // --- Voxel downsample (for plane detection speed) ---
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
     if (opts.voxel_leaf > 0.0f && cloud->size() > 100000) {
-        pcl::ApproximateVoxelGrid<pcl::PointXYZI> vg;
+        pcl::ApproximateVoxelGrid<pcl::PointXYZ> vg;
         vg.setInputCloud(cloud);
         vg.setLeafSize(opts.voxel_leaf, opts.voxel_leaf, opts.voxel_leaf);
         vg.filter(*cloud_filtered);
@@ -178,26 +178,45 @@ int main(int argc, char** argv) {
         cloud_filtered = cloud;
     }
 
-    // --- Rough Z filter: only consider likely ground-level points ---
-    // Ground should be near the bottom of the cloud
-    pcl::PointXYZI min_pt, max_pt;
-    pcl::getMinMax3D(*cloud_filtered, min_pt, max_pt);
-    double z_min = min_pt.z;
-    double z_max = max_pt.z;
-    double z_range = z_max - z_min;
+    // --- Robust Z percentile for ground candidate selection ---
+    // Use percentile-based range to avoid outlier contamination
+    // (e.g. a few stray points at Z=-5 would skew min/max entirely)
+    std::vector<float> z_values;
+    z_values.reserve(cloud_filtered->size());
+    for (const auto& pt : cloud_filtered->points)
+        z_values.push_back(pt.z);
+    std::sort(z_values.begin(), z_values.end());
 
-    // Dynamic ground Z max: bottom 30% of the cloud height
-    double ground_z_max = z_min + z_range * 0.3;
+    double z_p01 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.01)))];   // 1st percentile
+    double z_p30 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.30)))];   // 30th percentile
+    double z_p99 = z_values[std::max(size_t(0), std::min(z_values.size() - 1,
+                              size_t(z_values.size() * 0.99)))];   // 99th percentile
 
-    pcl::PointCloud<pcl::PointXYZI>::Ptr ground_candidates(new pcl::PointCloud<pcl::PointXYZI>);
+    // Ground candidates: bottom 30% of the *robust* Z span (P1 → P30)
+    double ground_z_min_eff = z_p01;
+    double ground_z_max = z_p30;
+
+    std::cout << "[level_pcd] Z percentiles: P1=" << z_p01 << " P30=" << z_p30
+              << " P99=" << z_p99 << " (robust min/max)\n";
+
+    // Fallback if percentiles are degenerate (flat cloud)
+    if (ground_z_max - ground_z_min_eff < 0.01) {
+        ground_z_min_eff = z_values.front();
+        ground_z_max = z_values.back();
+        std::cout << "[level_pcd] Percentile range too narrow, using full Z range\n";
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr ground_candidates(new pcl::PointCloud<pcl::PointXYZ>);
     {
-        pcl::PassThrough<pcl::PointXYZI> pass;
+        pcl::PassThrough<pcl::PointXYZ> pass;
         pass.setInputCloud(cloud_filtered);
         pass.setFilterFieldName("z");
-        pass.setFilterLimits(opts.ground_z_min, ground_z_max);
+        pass.setFilterLimits(ground_z_min_eff, ground_z_max);
         pass.filter(*ground_candidates);
     }
-    std::cout << "[level_pcd] Ground candidates (Z in [" << opts.ground_z_min
+    std::cout << "[level_pcd] Ground candidates (Z in [" << ground_z_min_eff
               << ", " << ground_z_max << "]): " << ground_candidates->size() << " points\n";
 
     if (ground_candidates->size() < 100) {
@@ -207,7 +226,7 @@ int main(int argc, char** argv) {
     }
 
     // --- RANSAC plane detection ---
-    pcl::SACSegmentation<pcl::PointXYZI> seg;
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
@@ -244,15 +263,15 @@ int main(int argc, char** argv) {
               << " / " << ground_candidates->size() << "\n";
 
     if (tilt_deg > opts.max_tilt_deg) {
-        std::cerr << "[level_pcd] WARNING: Detected plane tilt (" << tilt_deg
+        std::cerr << "[level_pcd] ERROR: Detected plane tilt (" << tilt_deg
                   << "°) exceeds --max-tilt-degrees (" << opts.max_tilt_deg
-                  << "°). The detected plane may not be ground.\n";
-        std::cerr << "[level_pcd] Proceeding anyway, but check the result.\n";
+                  << "°). Likely a wall, not ground. Aborting to keep original PCD.\n";
+        return 1;
     }
 
     // --- Compute leveling transform ---
-    pcl::PointCloud<pcl::PointXYZI>::Ptr inlier_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::ExtractIndices<pcl::PointXYZI> extract;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr inlier_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
     extract.setInputCloud(ground_candidates);
     extract.setIndices(inliers);
     extract.filter(*inlier_cloud);
@@ -260,7 +279,7 @@ int main(int argc, char** argv) {
     Eigen::Matrix4f T = compute_leveling_transform(normal, inlier_cloud);
 
     // --- Apply transform to FULL cloud ---
-    pcl::PointCloud<pcl::PointXYZI>::Ptr leveled(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr leveled(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::transformPointCloud(*cloud, *leveled, T);
     std::cout << "[level_pcd] Transformed " << leveled->size() << " points\n";
 
@@ -272,8 +291,9 @@ int main(int argc, char** argv) {
     std::cout << "[level_pcd] Leveled PCD saved to: " << opts.output << "\n";
 
     // Report Z range change
+    pcl::PointXYZ min_pt, max_pt;
     pcl::getMinMax3D(*cloud, min_pt, max_pt);
-    pcl::PointXYZI lvl_min, lvl_max;
+    pcl::PointXYZ lvl_min, lvl_max;
     pcl::getMinMax3D(*leveled, lvl_min, lvl_max);
     std::cout << "[level_pcd] Z range before: [" << min_pt.z << ", " << max_pt.z << "]\n";
     std::cout << "[level_pcd] Z range after:  [" << lvl_min.z << ", " << lvl_max.z << "]\n";

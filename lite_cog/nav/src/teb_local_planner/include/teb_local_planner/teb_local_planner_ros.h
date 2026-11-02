@@ -450,6 +450,7 @@ private:
   bool terminal_convergence_active_; //!< Latch terminal PID until a large position displacement
   TerminalPidController terminal_pid_; //!< Independent XY/yaw controller used near the goal
   ros::Time terminal_pid_last_time_; //!< Last terminal PID update time
+  bool teb_planning_bypassed_; //!< Whether PID control has cleared and bypassed the TEB trajectory
 
   PoseSE2 robot_pose_; //!< Store current robot pose
   PoseSE2 robot_goal_; //!< Store current robot goal

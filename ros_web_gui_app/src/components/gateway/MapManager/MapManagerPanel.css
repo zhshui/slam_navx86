@@ -1,0 +1,70 @@
+.MapManagerPanel {
+  min-width: 0;
+}
+
+.MapManagerPanel input,
+.MapManagerPanel select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.MapManagerTable {
+  table-layout: fixed;
+}
+
+.MapManagerTable th,
+.MapManagerTable td {
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.MapManagerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.MapManagerActions button {
+  min-width: 44px;
+  min-height: 32px;
+}
+
+@media (max-width: 680px) {
+  .MapManagerTable,
+  .MapManagerTable tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .MapManagerTable colgroup,
+  .MapManagerTable thead {
+    display: none;
+  }
+
+  .MapManagerTable tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 12px 6px;
+  }
+
+  .MapManagerTable td {
+    display: block;
+    min-width: 0;
+  }
+
+  .MapManagerTable td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: #aaa;
+    font-size: 11px;
+  }
+
+  .MapManagerTable .MapManagerName,
+  .MapManagerTable .MapManagerActionsCell {
+    grid-column: 1 / -1;
+  }
+
+}

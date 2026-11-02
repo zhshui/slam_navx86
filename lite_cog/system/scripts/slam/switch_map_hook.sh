@@ -8,9 +8,9 @@ YAML_REL="$1"
 PCD_REL="$2"
 MAP_NAME="${3:-unknown}"
 
-GATEWAY_DIR="$HOME/go2_nav/ros_web_gui_app/gateway"
-MAP_DIR="$HOME/go2_nav/lite_cog/system/map"
-ACTIVE_DIR="$HOME/go2_nav/lite_cog/system/map/active"
+GATEWAY_DIR="/home/unitree/go2_nav/ros_web_gui_app/gateway"
+MAP_DIR="/home/unitree/go2_nav/lite_cog/system/map"
+ACTIVE_DIR="/home/unitree/go2_nav/lite_cog/system/map/active"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 LOG_TAG="[switch_map]"
 

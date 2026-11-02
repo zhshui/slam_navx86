@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGatewayContext } from '../GatewayProvider'
 import { apiBase, apiRequest } from '../../../api/gatewayApi'
+import './MapManagerPanel.css'
 
 interface PcdInfo {
   path: string
@@ -28,6 +29,8 @@ const btnStyle: React.CSSProperties = {
   cursor: 'pointer',
   fontWeight: 'bold',
   color: 'white',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }
 
 export function MapManagerPanel() {
@@ -64,7 +67,7 @@ export function MapManagerPanel() {
   )
 
   return (
-    <div>
+    <div className="MapManagerPanel">
       <h2 style={{ marginTop: 0 }}>地图管理</h2>
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -121,7 +124,14 @@ export function MapManagerPanel() {
       {errorText && <p style={{ color: '#e94560' }}>{errorText}</p>}
       {statusText && <p style={{ color: '#4CAF50' }}>{statusText}</p>}
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', color: '#eee', fontSize: '12px' }}>
+      <table className="MapManagerTable" style={{ width: '100%', borderCollapse: 'collapse', color: '#eee', fontSize: '12px' }}>
+        <colgroup>
+          <col style={{ width: '28%' }} />
+          <col style={{ width: '18%' }} />
+          <col style={{ width: '18%' }} />
+          <col style={{ width: '7%' }} />
+          <col style={{ width: '29%' }} />
+        </colgroup>
         <thead>
           <tr style={{ backgroundColor: '#16213e' }}>
             <th style={{ padding: '5px 6px', textAlign: 'left' }}>名称</th>
@@ -133,8 +143,8 @@ export function MapManagerPanel() {
         </thead>
         <tbody>
           {maps.map((m) => (
-            <tr key={m.id} style={{ borderBottom: '1px solid #333' }}>
-              <td style={{ padding: '4px 6px' }}>
+            <tr key={m.id ?? m.name} style={{ borderBottom: '1px solid #333' }}>
+              <td className="MapManagerName" data-label="名称" style={{ padding: '4px 6px' }}>
                 {editingName?.id === m.id ? (
                   <input
                     autoFocus
@@ -161,9 +171,33 @@ export function MapManagerPanel() {
                     title="点击编辑名称"
                   >{m.name}</span>
                 )}
+                {m.registered === false && (
+                  <>
+                    {' '}
+                    <span style={{ color: '#FF9800', fontSize: '11px' }} title="文件夹中有此地图，但尚未登记到数据库">📄未登记</span>
+                    {m.no_yaml && (
+                      <span style={{ color: '#e94560', fontSize: '11px' }} title="文件夹中没有同名 .yaml/.pgm，切换导航时静态地图将不可用">⚠️无栅格</span>
+                    )}
+                    <button
+                      style={{ ...btnStyle, backgroundColor: '#FF9800', padding: '1px 6px', fontSize: '11px', marginLeft: '4px' }}
+                      disabled={!!m.no_yaml}
+                      title={m.no_yaml ? '缺少 .yaml/.pgm，无法登记' : '登记到数据库'}
+                      onClick={async () => {
+                        try {
+                          await apiRequest('/api/maps/register', t, { method: 'POST', body: JSON.stringify({ name: m.name }) })
+                          await refreshSnapshot()
+                          setStatusText(`已登记「${m.name}」`)
+                        } catch (e) { setErrorText(String(e)) }
+                      }}
+                    >登记</button>
+                  </>
+                )}
+                {m.missing && (
+                  <span style={{ color: '#e94560', fontSize: '11px', marginLeft: '4px' }} title="数据库有记录，但地图文件已不存在">⚠️文件缺失</span>
+                )}
               </td>
-              <td style={{ padding: '4px 6px', fontSize: '11px', color: '#aaa' }}>{m.yaml_path.split('/').pop()}</td>
-              <td style={{ padding: '4px 6px' }}>
+              <td data-label="栅格" style={{ padding: '4px 6px', fontSize: '11px', color: '#aaa' }}>{m.yaml_path.split('/').pop()}</td>
+              <td data-label="PCD" style={{ padding: '4px 6px' }}>
                 {m.pcd_path ? (
                   <span style={{ color: '#4CAF50', fontSize: '11px' }}>{m.pcd_path.split('/').pop()}</span>
                 ) : (
@@ -186,8 +220,26 @@ export function MapManagerPanel() {
                   </select>
                 )}
               </td>
-              <td style={{ padding: '4px 6px', fontSize: '12px' }}>{m.active ? '是' : '否'}</td>
-              <td style={{ padding: '4px 6px', display: 'flex', gap: '3px' }}>
+              <td data-label="激活" style={{ padding: '4px 6px', fontSize: '12px' }}>{m.active ? '是' : '否'}</td>
+              <td className="MapManagerActionsCell" data-label="操作" style={{ padding: '4px 6px' }}>
+                <div className="MapManagerActions">
+                {m.registered === false && (
+                  <>
+                    <button
+                      style={{ ...btnStyle, backgroundColor: '#f44336', padding: '3px 6px', fontSize: '11px' }}
+                      onClick={async () => {
+                        if (!window.confirm(`确认删除地图文件夹「${m.name}」？文件将一并删除`)) return
+                        try {
+                          await apiRequest('/api/maps/delete-folder', t, { method: 'POST', body: JSON.stringify({ name: m.name }) })
+                          await refreshSnapshot()
+                          setStatusText(`已删除「${m.name}」`)
+                        } catch (e) { setErrorText(String(e)) }
+                      }}
+                    >删除</button>
+                    <span style={{ color: '#666', fontSize: '11px' }}>未登记</span>
+                  </>
+                )}
+                {m.registered !== false && (<>
                 <button
                   style={{ ...btnStyle, backgroundColor: switchingId === m.id ? '#666' : '#2196F3', cursor: switchingId ? 'wait' : 'pointer', padding: '3px 6px', fontSize: '11px' }}
                   disabled={!!switchingId}
@@ -205,7 +257,7 @@ export function MapManagerPanel() {
                       setSwitchingId(null)
                     }
                   }}
-                >{switchingId === m.id ? '切换中...' : '切换'}</button>
+                >{m.id && switchingId === m.id ? '切换中...' : '切换'}</button>
                 <button style={{ ...btnStyle, backgroundColor: '#9C27B0', padding: '3px 6px', fontSize: '11px' }} onClick={async () => {
                   try {
                     setStatusText('正在打包...')
@@ -228,6 +280,8 @@ export function MapManagerPanel() {
                     .then(() => refreshSnapshot())
                     .catch(e => setErrorText(String(e)))
                 }}>删除</button>
+                </>)}
+                </div>
               </td>
             </tr>
           ))}

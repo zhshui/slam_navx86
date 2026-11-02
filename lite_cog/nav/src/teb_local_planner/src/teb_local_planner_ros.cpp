@@ -77,6 +77,7 @@ TebLocalPlannerROS::TebLocalPlannerROS() : costmap_ros_(NULL), tf_(NULL), costma
                                            path_heading_initialized_(false), smoothed_path_heading_(0.0),
                                            cruise_yaw_direction_(0),
                                            terminal_convergence_active_(false),
+                                           teb_planning_bypassed_(false),
                                            initialized_(false)
 {
   std::cout << "Customized teb_local_planner launched!" << std::endl;
@@ -481,8 +482,89 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
   }
   transformed_plan.front() = robot_pose; // update start
 
+  const double path_heading_error =
+      g2o::normalize_theta(robot_goal_.theta() - robot_pose_.theta());
+  const double initial_path_alignment_tolerance = 0.17453292519943295;  // 10 deg
+  if (public_xy_reached)
+  {
+    initial_path_alignment_pending_ = false;
+    initial_alignment_pid_.reset();
+    initial_alignment_pid_last_time_ = ros::Time();
+  }
+  else if (initial_path_alignment_pending_ &&
+           std::fabs(path_heading_error) <= initial_path_alignment_tolerance)
+  {
+    initial_path_alignment_pending_ = false;
+    initial_alignment_pid_.reset();
+    initial_alignment_pid_last_time_ = ros::Time();
+    ROS_INFO("TEB initial path alignment complete: error=%.1fdeg",
+             path_heading_error*180/M_PI);
+  }
+  const bool initial_path_alignment_active =
+      initial_path_alignment_pending_ && !public_xy_reached;
+
+  auto bypassTebPlanning = [&]()
+  {
+    if (!teb_planning_bypassed_)
+    {
+      planner_->clearPlanner();
+      visualization_->publishLocalPlan(
+          std::vector<geometry_msgs::PoseStamped>());
+      teb_planning_bypassed_ = true;
+      ROS_INFO("TEB trajectory cleared: PID control bypass active");
+    }
+  };
+
+  auto isPidMotionFootprintFeasible =
+      [&](const geometry_msgs::Twist& command,
+          const char* phase) -> bool
+  {
+    if (cfg_.robot.is_footprint_dynamic)
+    {
+      footprint_spec_ = costmap_ros_->getRobotFootprint();
+      costmap_2d::calculateMinAndMaxDistances(
+          footprint_spec_, robot_inscribed_radius_,
+          robot_circumscribed_radius);
+    }
+
+    const double projection_time = 0.5;
+    const double cos_yaw = std::cos(robot_pose_.theta());
+    const double sin_yaw = std::sin(robot_pose_.theta());
+    const double velocity_global_x =
+        cos_yaw * command.linear.x -
+        sin_yaw * command.linear.y;
+    const double velocity_global_y =
+        sin_yaw * command.linear.x +
+        cos_yaw * command.linear.y;
+    const double projected_x =
+        robot_pose_.x() + velocity_global_x * projection_time;
+    const double projected_y =
+        robot_pose_.y() + velocity_global_y * projection_time;
+    const double projected_yaw = g2o::normalize_theta(
+        robot_pose_.theta() +
+        command.angular.z * projection_time);
+
+    const double current_footprint_cost = costmap_model_->footprintCost(
+        robot_pose_.x(), robot_pose_.y(), robot_pose_.theta(),
+        footprint_spec_, robot_inscribed_radius_,
+        robot_circumscribed_radius);
+    const double projected_footprint_cost = costmap_model_->footprintCost(
+        projected_x, projected_y, projected_yaw,
+        footprint_spec_, robot_inscribed_radius_,
+        robot_circumscribed_radius);
+    if (current_footprint_cost >= 0.0 && projected_footprint_cost >= 0.0)
+      return true;
+
+    ROS_WARN_THROTTLE(
+        1.0,
+        "%s PID stopped by footprint check: current=%.1f projected=%.1f",
+        phase, current_footprint_cost, projected_footprint_cost);
+    return false;
+  };
+
   if (terminal_convergence_active_)
   {
+    bypassTebPlanning();
     publishNavigationState("GOAL_ALIGNING");
     cruise_yaw_direction_ = 0;
     const ros::Time now = ros::Time::now();
@@ -505,50 +587,13 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
         cfg_.robot.max_vel_trans, cfg_.robot.max_vel_theta,
         terminal_max_vel_x_backwards);
 
-    if (cfg_.robot.is_footprint_dynamic)
-    {
-      footprint_spec_ = costmap_ros_->getRobotFootprint();
-      costmap_2d::calculateMinAndMaxDistances(
-          footprint_spec_, robot_inscribed_radius_,
-          robot_circumscribed_radius);
-    }
-
-    const double projection_time = 0.5;
-    const double cos_yaw = std::cos(robot_pose_.theta());
-    const double sin_yaw = std::sin(robot_pose_.theta());
-    const double velocity_global_x =
-        cos_yaw * cmd_vel.twist.linear.x -
-        sin_yaw * cmd_vel.twist.linear.y;
-    const double velocity_global_y =
-        sin_yaw * cmd_vel.twist.linear.x +
-        cos_yaw * cmd_vel.twist.linear.y;
-    const double projected_x =
-        robot_pose_.x() + velocity_global_x * projection_time;
-    const double projected_y =
-        robot_pose_.y() + velocity_global_y * projection_time;
-    const double projected_yaw = g2o::normalize_theta(
-        robot_pose_.theta() +
-        cmd_vel.twist.angular.z * projection_time);
-
-    const double current_footprint_cost = costmap_model_->footprintCost(
-        robot_pose_.x(), robot_pose_.y(), robot_pose_.theta(),
-        footprint_spec_, robot_inscribed_radius_,
-        robot_circumscribed_radius);
-    const double projected_footprint_cost = costmap_model_->footprintCost(
-        projected_x, projected_y, projected_yaw,
-        footprint_spec_, robot_inscribed_radius_,
-        robot_circumscribed_radius);
-    if (current_footprint_cost < 0.0 || projected_footprint_cost < 0.0)
+    if (!isPidMotionFootprintFeasible(cmd_vel.twist, "terminal"))
     {
       cmd_vel.twist.linear.x = 0.0;
       cmd_vel.twist.linear.y = 0.0;
       cmd_vel.twist.angular.z = 0.0;
       last_cmd_ = cmd_vel.twist;
       message = "terminal PID motion is not footprint-feasible";
-      ROS_WARN_THROTTLE(
-          1.0,
-          "TEB terminal PID stopped by footprint check: current=%.1f projected=%.1f",
-          current_footprint_cost, projected_footprint_cost);
       return mbf_msgs::ExePathResult::NO_VALID_CMD;
     }
 
@@ -563,6 +608,43 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
     visualization_->publishGlobalPlan(global_plan_);
     return mbf_msgs::ExePathResult::SUCCESS;
   }
+
+  if (initial_path_alignment_active)
+  {
+    bypassTebPlanning();
+    publishNavigationState("PATH_ALIGNING");
+    cruise_yaw_direction_ = 0;
+    const ros::Time now = ros::Time::now();
+    double alignment_dt = 0.1;
+    if (!initial_alignment_pid_last_time_.isZero())
+      alignment_dt = (now - initial_alignment_pid_last_time_).toSec();
+    initial_alignment_pid_last_time_ = now;
+    cmd_vel.twist = initial_alignment_pid_.calculate(
+        0.0, 0.0, path_heading_error, robot_pose_.theta(),
+        alignment_dt, 0.0, initial_path_alignment_tolerance);
+
+    if (!isPidMotionFootprintFeasible(cmd_vel.twist, "initial alignment"))
+    {
+      cmd_vel.twist.linear.x = 0.0;
+      cmd_vel.twist.linear.y = 0.0;
+      cmd_vel.twist.angular.z = 0.0;
+      last_cmd_ = cmd_vel.twist;
+      message = "initial alignment PID motion is not footprint-feasible";
+      return mbf_msgs::ExePathResult::NO_VALID_CMD;
+    }
+
+    ROS_WARN_THROTTLE(
+        1.0,
+        "TEB initial path PID ALIGN(shortest arc): error=%.1fdeg path_yaw=%.1fdeg robot_yaw=%.1fdeg cmd_w=%.2f",
+        path_heading_error*180/M_PI, robot_goal_.theta()*180/M_PI,
+        robot_pose_.theta()*180/M_PI, cmd_vel.twist.angular.z);
+    no_infeasible_plans_ = 0;
+    last_cmd_ = cmd_vel.twist;
+    visualization_->publishGlobalPlan(global_plan_);
+    return mbf_msgs::ExePathResult::SUCCESS;
+  }
+
+  teb_planning_bypassed_ = false;
     
   // clear currently existing obstacles
   obstacles_.clear();
@@ -657,47 +739,8 @@ uint32_t TebLocalPlannerROS::computeVelocityCommands(const geometry_msgs::PoseSt
   double approach_deadband = inner_xy_goal;
   double dx_goal = robot_goal_.x() - robot_pose_.x();
   double dy_goal = robot_goal_.y() - robot_pose_.y();
-  const double path_heading_error =
-      g2o::normalize_theta(robot_goal_.theta() - robot_pose_.theta());
-  const double initial_path_alignment_tolerance = 0.17453292519943295;  // 10 deg
-  if (public_xy_reached)
-  {
-    initial_path_alignment_pending_ = false;
-    initial_alignment_pid_.reset();
-    initial_alignment_pid_last_time_ = ros::Time();
-  }
-  else if (initial_path_alignment_pending_ &&
-           std::fabs(path_heading_error) <= initial_path_alignment_tolerance)
-  {
-    initial_path_alignment_pending_ = false;
-    initial_alignment_pid_.reset();
-    initial_alignment_pid_last_time_ = ros::Time();
-    ROS_INFO("TEB initial path alignment complete: error=%.1fdeg",
-             path_heading_error*180/M_PI);
-  }
-  const bool initial_path_alignment_active =
-      initial_path_alignment_pending_ && !public_xy_reached;
 
-  if (initial_path_alignment_active)
-  {
-    publishNavigationState("PATH_ALIGNING");
-    const ros::Time now = ros::Time::now();
-    double alignment_dt = 0.1;
-    if (!initial_alignment_pid_last_time_.isZero())
-      alignment_dt = (now - initial_alignment_pid_last_time_).toSec();
-    initial_alignment_pid_last_time_ = now;
-    const geometry_msgs::Twist alignment_cmd =
-        initial_alignment_pid_.calculate(
-            0.0, 0.0, path_heading_error, robot_pose_.theta(),
-            alignment_dt, 0.0, initial_path_alignment_tolerance);
-    ROS_WARN_THROTTLE(
-        1.0,
-        "TEB initial path PID ALIGN(shortest arc): error=%.1fdeg path_yaw=%.1fdeg robot_yaw=%.1fdeg cmd_w=%.2f",
-        path_heading_error*180/M_PI, robot_goal_.theta()*180/M_PI,
-        robot_pose_.theta()*180/M_PI, alignment_cmd.angular.z);
-    cmd_vel.twist = alignment_cmd;
-  }
-  else if (dist_to_goal_xy <= finish_xy_window)
+  if (dist_to_goal_xy <= finish_xy_window)
   {
     publishNavigationState("ACTIVE");
     cruise_yaw_direction_ = 0;

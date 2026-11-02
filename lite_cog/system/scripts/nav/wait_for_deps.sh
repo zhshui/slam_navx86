@@ -4,8 +4,7 @@
 # Used as launch-prefix in navigation.launch
 # ============================================
 source /opt/ros/noetic/setup.bash
-# 重新加载 nav 工作空间，否则 ROS_PACKAGE_PATH 丢失导致 move_base 找不到 TEB 插件
-source "$HOME/go2_nav/lite_cog/nav/devel/setup.bash" 2>/dev/null || true
+source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash
 
 MAX_WAIT=30
 
@@ -27,7 +26,7 @@ while true; do
     fi
 
     # Check 2: TF from map to base_link exists
-    tf_line=$(timeout 2 bash -c 'source /opt/ros/noetic/setup.bash && rosrun tf tf_echo map base_link 2>/dev/null' | head -1)
+    tf_line=$(timeout 2 bash -c 'source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash && rosrun tf tf_echo map base_link 2>/dev/null' | head -1)
     if ! echo "$tf_line" | grep -q 'At time'; then
         sleep 1
         continue

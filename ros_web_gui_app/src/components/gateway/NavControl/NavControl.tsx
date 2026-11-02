@@ -24,7 +24,7 @@ export function NavControl() {
   const [errorText, setErrorText] = useState('')
   const [statusText, setStatusText] = useState('')
   const [navOrder, setNavOrder] = useState<string[]>([])
-  const [editingNameId, setEditingNameId] = useState<number | null>(null)
+  const [editingNameId, setEditingNameId] = useState<string | null>(null)
   const [editNameValue, setEditNameValue] = useState('')
   const navPoints: NavPoint[] = (snapshot?.navPoints ?? []) as NavPoint[]
   const lastPointNames = useRef('')

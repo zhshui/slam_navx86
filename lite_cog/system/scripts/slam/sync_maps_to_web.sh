@@ -2,8 +2,8 @@
 # Sync all maps (PCD + PGM/YAML) from system/map to gateway database
 # Scans all subdirectories, registers any new maps found
 
-SOURCE_DIR="$HOME/go2_nav/lite_cog/system/map"
-GATEWAY_DIR="$HOME/go2_nav/ros_web_gui_app/gateway"
+SOURCE_DIR="/home/unitree/go2_nav/lite_cog/system/map"
+GATEWAY_DIR="/home/unitree/go2_nav/ros_web_gui_app/gateway"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 DB="$GATEWAY_DIR/data/nav_web.sqlite"
 
@@ -54,3 +54,4 @@ done
 
 echo "[sync_maps] Sync complete"
 sqlite3 "$DB" "SELECT name, yaml_path, active FROM maps ORDER BY created_at DESC;" 2>/dev/null
+

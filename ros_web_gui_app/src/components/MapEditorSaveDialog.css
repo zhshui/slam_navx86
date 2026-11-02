@@ -1,0 +1,48 @@
+.MapSaveBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.MapSaveDialog {
+  width: min(440px, calc(100% - 32px));
+  max-height: 90%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background: #16213e;
+  color: #eee;
+}
+
+.MapSaveDialog h3 { margin-top: 0; }
+.MapSaveDialog p { font-size: 13px; line-height: 1.6; }
+.MapSaveDialog label { display: block; margin: 16px 0; }
+.MapSaveDialog input, .MapSaveDialog select {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background: #0f3460;
+  color: #eee;
+}
+.MapSaveError { color: #ff899b; overflow-wrap: anywhere; }
+.MapSaveActions { display: flex; justify-content: flex-end; gap: 12px; }
+.MapSaveActions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #0f3460;
+  color: white;
+  cursor: pointer;
+}
+.MapSaveActions button[type="submit"] { background: #e94560; }
+.MapSaveActions button:disabled { opacity: 0.5; cursor: not-allowed; }

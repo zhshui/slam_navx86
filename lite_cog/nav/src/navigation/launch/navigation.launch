@@ -1,28 +1,9 @@
 <launch>
-  <!-- Filter LiDAR points within 30cm of robot body -->
-  <node name="livox_crop_box" pkg="nodelet" type="nodelet"
-        args="standalone pcl/CropBox" output="screen">
-    <remap from="~input"  to="/livox/lidar" />
-    <remap from="~output" to="/livox/lidar_nav" />
-    <rosparam>
-      input_frame: base_link
-      output_frame: livox_frame
-      negative: true
-      min_x: -0.3
-      max_x: 0.3
-      min_y: -0.3
-      max_y: 0.3
-      min_z: -10.0
-      max_z: 10.0
-      keep_organized: false
-    </rosparam>
-  </node>
-
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
-        launch-prefix="$(env HOME)/go2_nav/lite_cog/system/scripts/nav/wait_for_deps.sh">
+        launch-prefix="/home/unitree/go2_nav/lite_cog/system/scripts/nav/wait_for_deps.sh">
     <!-- global costmap -->
-    <rosparam file="$(find navigation)/config/common_costmap_params.yaml" command="load" ns="global_costmap" /> 
-    <rosparam file="$(find navigation)/config/global_costmap_params.yaml" command="load" ns="global_costmap" />     
+    <rosparam file="$(find navigation)/config/common_costmap_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="$(find navigation)/config/global_costmap_params.yaml" command="load" ns="global_costmap" />
 
     <!-- local costmap -->
     <rosparam file="$(find navigation)/config/local_costmap_params.yaml" command="load" ns="local_costmap" />
@@ -37,14 +18,4 @@
     <!-- move base -->
     <rosparam file="$(find navigation)/config/move_base_params.yaml" command="load"/>
   </node>
-
-  <!-- 替换 A* 原始折线为平滑路径: Douglas-Peucker + B样条 (带 costmap 碰撞检测) -->
-  <node pkg="navigation" type="path_smoother.py" name="path_smoother" output="screen">
-    <param name="simplify_tolerance" value="0.30" />
-    <param name="smooth_step" value="0.03" />
-    <param name="collision_check" value="true" />
-    <param name="cost_threshold" value="100" />
-    <param name="validation_step" value="0.05" />
-  </node>
-
 </launch>

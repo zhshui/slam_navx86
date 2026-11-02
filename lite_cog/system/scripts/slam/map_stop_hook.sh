@@ -9,9 +9,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MAP_DIR="/home/unitree/go2_nav/lite_cog/system/map"
+MAP_DIR="${MAP_DIR:-/home/unitree/go2_nav/lite_cog/system/map}"
 ACTIVE_DIR="$MAP_DIR/active"
-GATEWAY_DIR="/home/unitree/go2_nav/ros_web_gui_app/gateway"
+GATEWAY_DIR="${GATEWAY_DIR:-/home/unitree/go2_nav/ros_web_gui_app/gateway}"
 MAPS_DIR="$GATEWAY_DIR/data/maps"
 DB="$GATEWAY_DIR/data/nav_web.sqlite"
 SLAM_PROC_PATTERN="${MAP_STOP_PROC_PATTERN:-fastlio_mapping}"
@@ -71,7 +71,8 @@ if [ "$SEG_COUNT" -gt 0 ]; then
         echo "$TAG   合并成功: scans_$N.pcd, 分段已清理"
     else
         rm -f "$MAP_DIR/output.pcd"
-        echo "$TAG   WARNING: 合并失败, 分段文件保留"
+        echo "$TAG   ERROR: 合并失败, 分段文件保留; 不使用单个分段生成地图"
+        exit 1
     fi
 else
     echo "$TAG   无分段文件, 跳过合并"
@@ -86,7 +87,7 @@ for f in "$MAP_DIR"/*.pcd "$MAP_DIR"/*/*.pcd "$ACTIVE_DIR"/*.pcd; do
     base=$(basename "$f")
     # 跳过衍生文件
     case "$base" in
-        *leveled*|*colored*|*_z_range*) continue ;;
+        scans_seg_*|*leveled*|*colored*|*_z_range*) continue ;;
     esac
     ts=$(stat -c %Y "$f" 2>/dev/null || echo 0)
     if [ "$ts" -gt "$LATEST_TS" ]; then

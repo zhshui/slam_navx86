@@ -48,15 +48,6 @@ function App() {
     return false;
   }, []);
 
-  const handleDisconnect = useCallback(() => {
-    if (connection) {
-      connection.disconnect();
-      TF2JS.getInstance().disconnect();
-      setConnection(null);
-      setConnected(false);
-    }
-  }, [connection]);
-
   useEffect(() => {
     const wsUrl = getWsUrlFromUrl();
     console.log('[App] 初始连接检查:', { pathname: window.location.pathname, wsUrl, connected });
@@ -101,8 +92,14 @@ function App() {
           <ConnectionPage
             onConnect={handleConnect}
             onGatewayMode={() => {
-              // 不使用 rosbridge 直连，只通过网关
-              setConnected(true);  // 绕过 rosbridge，直接进入主界面
+              // 同时连接 rosbridge（点云图层需要）和网关
+              const rosbridgeUrl = 'ws://' + window.location.hostname + ':9090';
+              void handleConnect(rosbridgeUrl).then((ok) => {
+                if (!ok) {
+                  console.warn('[App] rosbridge 连接失败，点云图层不可用');
+                }
+                setConnected(true);
+              });
             }}
           />
         ) : (
