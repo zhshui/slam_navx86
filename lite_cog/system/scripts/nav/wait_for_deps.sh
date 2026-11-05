@@ -1,39 +1,51 @@
 #!/bin/bash
-# ============================================
-# Wait for move_base dependencies before launching
-# Used as launch-prefix in navigation.launch
-# ============================================
+# Wait for a map message and a usable TF before executing the launch command.
+set -e
+PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 source /opt/ros/noetic/setup.bash
-source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash
+source "$PROJECT_ROOT/lite_cog/nav/devel/setup.bash"
+MAX_WAIT=${NAV_DEPS_TIMEOUT:-30}
+if [[ ! "$MAX_WAIT" =~ ^[1-9][0-9]*$ ]] || (( $# == 0 )); then
+    echo "[wait_deps] Supply a command and a positive integer NAV_DEPS_TIMEOUT." >&2
+    exit 2
+fi
 
-MAX_WAIT=30
+echo "[wait_deps] Waiting for /map and TF map->base_link, timeout=${MAX_WAIT}s..."
+if timeout --signal=TERM --kill-after=2s "${MAX_WAIT}s" python3 - <<'PYROS'
+import threading
+import time
+import rospy
+import tf2_ros
+from nav_msgs.msg import OccupancyGrid
 
-echo "[wait_deps] Waiting for /map topic and TF (map->base_link), timeout=${MAX_WAIT}s..."
-start_ts=$(date +%s)
+started = time.monotonic()
+rospy.init_node('wait_for_nav_dependencies', anonymous=True, disable_signals=True)
+map_received = threading.Event()
 
-while true; do
-    elapsed=$(($(date +%s) - start_ts))
-    if [ $elapsed -ge $MAX_WAIT ]; then
-        echo "[wait_deps] Timeout after ${MAX_WAIT}s, launching move_base anyway..."
-        break
-    fi
+def on_map(message):
+    if message.info.width > 0 and message.info.height > 0 and message.data:
+        map_received.set()
 
-    # Check 1: /map topic has a publisher
-    map_info=$(timeout 2 rostopic info /map 2>/dev/null)
-    if ! echo "$map_info" | grep -q 'Publishers:.*http'; then
-        sleep 1
-        continue
-    fi
-
-    # Check 2: TF from map to base_link exists
-    tf_line=$(timeout 2 bash -c 'source /opt/ros/noetic/setup.bash && source /home/unitree/go2_nav/lite_cog/nav/devel/setup.bash && rosrun tf tf_echo map base_link 2>/dev/null' | head -1)
-    if ! echo "$tf_line" | grep -q 'At time'; then
-        sleep 1
-        continue
-    fi
-
-    echo "[wait_deps] All dependencies ready (${elapsed}s)"
-    break
-done
-
-exec "$@"
+buffer = tf2_ros.Buffer()
+listener = tf2_ros.TransformListener(buffer)
+subscriber = rospy.Subscriber('/map', OccupancyGrid, on_map, queue_size=1)
+previous = None
+while not rospy.is_shutdown():
+    state = (map_received.is_set(), buffer.can_transform('map', 'base_link', rospy.Time(0)))
+    if state == (True, True):
+        print('[wait_deps] All dependencies ready (%.2fs)' % (time.monotonic() - started), flush=True)
+        rospy.signal_shutdown('dependencies ready')
+        raise SystemExit(0)
+    if state != previous:
+        print('[wait_deps] map=%s tf=%s' % state, flush=True)
+        previous = state
+    time.sleep(0.1)
+raise SystemExit(1)
+PYROS
+then
+    exec "$@"
+else
+    rc=$?
+    echo "[wait_deps] Dependency check failed or timed out (exit=$rc); command NOT started." >&2
+    exit "$rc"
+fi
